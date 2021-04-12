@@ -37,11 +37,14 @@ void read_png_file(char* file_name)
 
         /* open file and test for it being a png */
         FILE *fp = fopen(file_name, "rb");
-        if (!fp)
+        if (!fp){
                 abort_("[read_png_file] File %s could not be opened for reading", file_name);
+        }     
         fread(header, 1, 8, fp);
-        if (png_sig_cmp(header, 0, 8))
+        if (png_sig_cmp(header, 0, 8)){
                 abort_("[read_png_file] File %s is not recognized as a PNG file", file_name);
+        }
+                
 
 
         /* initialize stuff */
@@ -65,6 +68,7 @@ void read_png_file(char* file_name)
         width = png_get_image_width(png_ptr, info_ptr);
         height = png_get_image_height(png_ptr, info_ptr);
         color_type = png_get_color_type(png_ptr, info_ptr);
+        printf("color type is : %d",color_type);
         bit_depth = png_get_bit_depth(png_ptr, info_ptr);
 
         number_of_passes = png_set_interlace_handling(png_ptr);
@@ -83,8 +87,23 @@ void read_png_file(char* file_name)
 
         fclose(fp);
 }
-
-
+void convert_grey_scale(){
+        /*
+        error_action = 1: silently do the conversion
+        error_action = 2: issue a warning if the original image has any pixel where red != green or red != blue
+        error_action = 3: issue an error and abort the conversion if the original image has any pixel where
+        red != green or red != blue
+        red_weight: weight of red component times 100000
+        green_weight: weight of green component times 100000
+        If either weight is negative, default weights (21268, 71514) are used.
+        */
+        // if need to remove alpha channel??
+        // check the color_type and which representation can be determined
+        if (color_type == PNG_COLOR_TYPE_RGB || color_type == PNG_COLOR_TYPE_RGB_ALPHA){
+                //png_set_rgb_to_gray_fixed(png_ptr, 3,int red_weight, int green_weight);
+        }
+                
+}
 void write_png_file(char* file_name)
 {
         /* create file */

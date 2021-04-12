@@ -8,8 +8,9 @@ int main(int argc, char** argv){
         return -1;
     }
     read_png_file(argv[1]);
+    // convert to grey scale
     // use row_pointers
-    //write_png_file(argv[2]);
+    write_png_file(argv[2]);
     //TODO: image preprossing
     //TODO: apply sobel filter
     //TODO: output image
