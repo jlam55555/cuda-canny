@@ -6,7 +6,6 @@
 #include <stdarg.h>
 
 #define PNG_DEBUG 3
-#include <png.h>
 
 void abort_(const char * s, ...)
 {
@@ -20,14 +19,17 @@ void abort_(const char * s, ...)
 
 int x, y;
 
-int width, height;
+//int width, height;
+//png_bytep * row_pointers;
+// they are moved to the header file
+
 png_byte color_type;
 png_byte bit_depth;
 
 png_structp png_ptr;
 png_infop info_ptr;
 int number_of_passes;
-png_bytep * row_pointers;
+
 
 void read_png_file(char* file_name)
 {
