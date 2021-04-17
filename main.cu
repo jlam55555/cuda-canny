@@ -26,18 +26,18 @@ __global__ void sobel(byte *img, byte *out, int h, int w)
 	x = blockDim.x*blockIdx.x + threadIdx.x;
 
 	if (y <= 0 || y >= h-1 || x <= 0 || x >= w-1) {
-		out[y*w+x] = 0;
 		return;
 	}
 
 	vKer = img[(y-1)*w+(x-1)]*1 + img[(y-1)*w+x]*2 + img[(y-1)*w+(x+1)]*1 +
-		img[(y+1)*w]*-1 + img[(y+1)*w+x]*-2 + img[(y+1)*w+(x+1)]*-1;
+		img[(y+1)*w+(x-1)]*-1 + img[(y+1)*w+x]*-2 + img[(y+1)*w+(x+1)]*-1;
 
 	hKer = img[(y-1)*w+(x-1)]*1 + img[(y-1)*w+(x+1)]*-1 +
 		img[y*w+(x-1)]*2 + img[y*w+(x+1)]*-2 +
-		img[(y+1)*w]*1 + img[(y+1)*w+(x+1)]*-1;
+		img[(y+1)*w+(x-1)]*1 + img[(y+1)*w+(x+1)]*-1;
 
-	out[y*w+x] = sqrtf(vKer*vKer + hKer*hKer);
+	// TODO: tweak this threshold?
+	out[y*w+x] = hKer*hKer + vKer*vKer > 40000 ? 255 : 0;
 }
 
 // grayscale operator from IEEE paper; transform multi-channel into grayscale
@@ -53,7 +53,7 @@ __global__ void toGrayScale(byte *dImg, byte *dImgMono, int h, int w, int ch)
 		return;
 	}
 
-	ind = y*w*ch + x;
+	ind = y*w*ch + x*ch;
 	dImgMono[y*w + x] = 0.2989*dImg[ind] + 0.5870*dImg[ind+1]
 		+ 0.1140*dImg[ind+2];
 }
@@ -70,7 +70,7 @@ __global__ void fromGrayScale(byte *dImgMono, byte *dImg, int h, int w, int ch)
 		return;
 	}
 
-	ind = y*w*ch+x;
+	ind = y*w*ch + x*ch;
 	dImg[ind] = dImg[ind+1] = dImg[ind+2] = dImgMono[y*w + x];
 }
 
@@ -85,6 +85,8 @@ __host__ int main(int argc, char **argv)
 	read_png_file((char *)"star.png");
 	channels = color_type==PNG_COLOR_TYPE_RGBA ? 4 : 3;
 	rowStride = width*channels;
+
+	std::cout << "Channels: " << channels << std::endl;
 
 	// allocate memory
 	std::cout << "Allocating host and device buffers..." << std::endl;
@@ -121,13 +123,13 @@ __host__ int main(int argc, char **argv)
 
 	// sobel filter
 	std::cout << "Performing sobel filter edge-detection..." << std::endl;
-//	sobel<<<dimGrid, dimBlock>>>(dImgMono, dImgMonoOut, height, width);
+	sobel<<<dimGrid, dimBlock>>>(dImgMono, dImgMonoOut, height, width);
 	CUDAERR(cudaGetLastError(), "launch sobel kernel");
 
 	// convert back from grayscale
 	std::cout << "Convert image back to multi-channel..." << std::endl;
-	fromGrayScale<<<dimGrid, dimBlock>>>(dImgMonoOut, dImg, height, width,
-		channels);
+	fromGrayScale<<<dimGrid, dimBlock>>>(dImgMonoOut, dImg,
+		height, width, channels);
 	CUDAERR(cudaGetLastError(), "launch fromGrayScale kernel");
 
 	// copy image back to host
@@ -136,7 +138,7 @@ __host__ int main(int argc, char **argv)
 		cudaMemcpyDeviceToHost), "cudaMemcpy to host");
 
 	// copy image back to row_pointers
-	std::cout << "Copy image back to row_pointers" << std::endl;
+	std::cout << "Copy image back to row_pointers..." << std::endl;
 	for (i = 0; i < height; ++i) {
 		memcpy(row_pointers[i], hImg + i*rowStride, rowStride);
 	}
