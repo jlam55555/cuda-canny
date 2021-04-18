@@ -1,5 +1,9 @@
-# Sobel_filter
+# Sobel_filter and other Edge Detection filter exploration
 implement Sobel filter in cuda c &amp; c and try to compare the efficiency
+
+implement Canny filter in cuda c &amp; c
+
+implement Laplacian filter in cuda c &amp; c
 
 TODO:
 - Implement basic Sobel filter w/ 3x3 horizontal and vertical kernels
