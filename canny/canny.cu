@@ -43,11 +43,49 @@ __host__ void blur(float blurSize, byte *dImg, byte *dImgOut)
         CUDAERR(cudaFree(dFlt), "freeing dFlt");
 }
 
+// basic sobel kernel
+// out is the magnitude of the gradient
+// out2 is the angle of the gradient
+__global__ void sobel(byte *img, byte *out, byte *out2, int h, int w)
+{
+	int vKer, hKer, y, x;
+
+	y = blockDim.y*blockIdx.y + threadIdx.y;
+	x = blockDim.x*blockIdx.x + threadIdx.x;
+
+	if (y <= 0 || y >= h-1 || x <= 0 || x >= w-1) {
+		return;
+	}
+
+	vKer = img[(y-1)*w+(x-1)]*1 + img[(y-1)*w+x]*2 + img[(y-1)*w+(x+1)]*1 +
+		img[(y+1)*w+(x-1)]*-1 + img[(y+1)*w+x]*-2 + img[(y+1)*w+(x+1)]*-1;
+
+	hKer = img[(y-1)*w+(x-1)]*1 + img[(y-1)*w+(x+1)]*-1 +
+		img[y*w+(x-1)]*2 + img[y*w+(x+1)]*-2 +
+		img[(y+1)*w+(x-1)]*1 + img[(y+1)*w+(x+1)]*-1;
+
+	out[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
+}
+
 // perform canny edge detection
 __host__ void canny(byte *dImg, byte *dImgOut)
 {
+	byte *dTmp;
+
 	std::cout << "Performing Gaussian blurring..." << std::endl;
 	blur(1.4, dImg, dImgOut);
+
+	std::cout << "Performing Sobel filter..." << std::endl;
+	sobel<<<dimGrid, dimBlock>>>(dImgOut, dImg, nullptr, height, width);
+	CUDAERR(cudaGetLastError(), "launch sobel kernel");
+
+	// TODO: remove this
+	CUDAERR(cudaMemcpy(dImgOut, dImg, width*height, cudaMemcpyDeviceToDevice),
+		"TESTING");
+
+	// dTmp = dImg;
+	// dImg = dImgOut;
+	// dImgOut = dTmp;
 }
 
 __host__ int main(int argc, char **argv)
@@ -104,11 +142,6 @@ __host__ int main(int argc, char **argv)
 	// canny edge detection
 	std::cout << "Performing canny edge-detection..." << std::endl;
 	canny(dImgMono, dImgMonoOut);
-
-	// TODO: remove these
-	// sobel<<<dimGrid, dimBlock>>>(dImgMono, dImgMonoOut, height, width);
-	// blur(1.4, dImgMono, dImgMonoOut);
-	// CUDAERR(cudaGetLastError(), "launch sobel kernel");
 
 	// convert back from grayscale
 	std::cout << "Convert image back to multi-channel..." << std::endl;
