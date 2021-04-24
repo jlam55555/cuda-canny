@@ -1,0 +1,12 @@
+# object files
+*.o
+
+# target executable
+sobel
+main
+
+# IntelliJ files
+.idea
+
+# image files
+*.png
