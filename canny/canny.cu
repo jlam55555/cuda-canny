@@ -65,27 +65,112 @@ __global__ void sobel(byte *img, byte *out, byte *out2, int h, int w)
 		img[(y+1)*w+(x-1)]*1 + img[(y+1)*w+(x+1)]*-1;
 
 	out[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
+	out2[y*w+x] = ((byte)roundf((atan2f(vKer, hKer)+M_PI) / (M_PI/4))) % 4;
+}
+
+// perform edge thinning
+__global__ void edge_thin(byte *mag, byte *angle, byte *out, int h, int w)
+{
+	int y, x, y1, x1, y2, x2;
+
+	y = blockDim.y*blockIdx.y + threadIdx.y;
+	x = blockDim.x*blockIdx.x + threadIdx.x;
+
+	if (y <= 0 || y >= h-1 || x <= 0 || x >= w-1) {
+		return;
+	}
+
+	// if not greater than angles in both directions, then zero
+	switch (angle[y*w + x]) {
+	case 0:
+		// horizontal
+		y1 = y2 = y;
+		x1 = x-1;
+		x2 = x+1;
+		break;
+	case 3:
+		// 135
+		y1 = y-1;
+		x1 = x+1;
+		y2 = y+1;
+		x2 = x-1;
+		break;
+	case 2:
+		// vertical
+		x1 = x2 = x;
+		y1 = y-1;
+		y2 = y+1;
+		break;
+	case 1:
+		// 45
+		y1 = y-1;
+		x1 = x-1;
+		y2 = y+1;
+		x2 = x+1;
+	}
+
+	if (mag[y1*w + x1] >= mag[y*w + x] || mag[y2*w + x2] >= mag[y*w + x]) {
+		out[y*w + x] = 0;
+	} else {
+		out[y*w + x] = mag[y*w + x];
+	}
+}
+
+// perform double thresholding
+__global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
+{
+	int y, x, ind, grad;
+
+	y = blockDim.y*blockIdx.y + threadIdx.y;
+	x = blockDim.x*blockIdx.x + threadIdx.x;
+
+	if (y <= 0 || y >= h-1 || x <= 0 || x >= w-1) {
+		return;
+	}
+
+	ind = y*w + x;
+	grad = dImg[ind];
+	if (grad < t1) {
+		out[ind] = 0;
+	} else if (grad < t2) {
+		out[ind] = t2;
+	} else {
+		out[ind] = 255;
+	}
 }
 
 // perform canny edge detection
 __host__ void canny(byte *dImg, byte *dImgOut)
 {
-	byte *dTmp;
+	byte *dTmp, *dImgTmp;
+
+	CUDAERR(cudaMalloc((void**)&dImgTmp, width*height), "alloc dImgTmp");
 
 	std::cout << "Performing Gaussian blurring..." << std::endl;
 	blur(1.4, dImg, dImgOut);
 
 	std::cout << "Performing Sobel filter..." << std::endl;
-	sobel<<<dimGrid, dimBlock>>>(dImgOut, dImg, nullptr, height, width);
+	sobel<<<dimGrid, dimBlock>>>(dImgOut, dImg, dImgTmp, height, width);
 	CUDAERR(cudaGetLastError(), "launch sobel kernel");
 
+	std::cout << "Performing edge thinning..." << std::endl;
+	edge_thin<<<dimGrid, dimBlock>>>(dImg, dImgTmp, dImgOut, height, width);
+	CUDAERR(cudaGetLastError(), "launch edge thinning kernel");
+
+	std::cout << "Performing double thresholding..." << std::endl;
+	edge_thin<<<dimGrid, dimBlock>>>(dImgOut, dImgTmp, height, width,
+		255*0.2, 255*0.5);
+	CUDAERR(cudaGetLastError(), "launch double thresholding kernel");
+
 	// TODO: remove this
-	CUDAERR(cudaMemcpy(dImgOut, dImg, width*height, cudaMemcpyDeviceToDevice),
+	CUDAERR(cudaMemcpy(dImgOut, dImgTmp, width*height, cudaMemcpyDeviceToDevice),
 		"TESTING");
 
 	// dTmp = dImg;
 	// dImg = dImgOut;
 	// dImgOut = dTmp;
+
+	CUDAERR(cudaFree(dImgTmp), "freeing dImgTmp");
 }
 
 __host__ int main(int argc, char **argv)
