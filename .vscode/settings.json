@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "image_prep.h": "c"
+    },
+    "C_Cpp.errorSquiggles": "Enabled"
+}

@@ -4,6 +4,7 @@
 # target executable
 sobel
 main
+canny
 
 # IntelliJ files
 .idea

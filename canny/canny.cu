@@ -146,15 +146,16 @@ __host__ void canny(byte *dImg, byte *dImgOut)
 
 	CUDAERR(cudaMalloc((void**)&dImgTmp, width*height), "alloc dImgTmp");
 
-	std::cout << "Performing Gaussian blurring..." << std::endl;
 	blur(1.4, dImg, dImgOut);
-
+	// img to imgout
 	std::cout << "Performing Sobel filter..." << std::endl;
 	sobel<<<dimGrid, dimBlock>>>(dImgOut, dImg, dImgTmp, height, width);
+	// imgout -> img / imgtemp
 	CUDAERR(cudaGetLastError(), "launch sobel kernel");
 
 	std::cout << "Performing edge thinning..." << std::endl;
 	edge_thin<<<dimGrid, dimBlock>>>(dImg, dImgTmp, dImgOut, height, width);
+	// 
 	CUDAERR(cudaGetLastError(), "launch edge thinning kernel");
 
 	std::cout << "Performing double thresholding..." << std::endl;
