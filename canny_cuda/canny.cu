@@ -199,13 +199,14 @@ __global__ void hysteresis(byte *dImg, int h, int w)
 }
 
 // perform canny edge detection
-__host__ void canny(byte *dImg, byte *dImgOut)
+__host__ void canny(byte *dImg, byte *dImgOut,
+	float blurStd, float threshold1, float threshold2, bool do_hysteresis)
 {
 	byte *dTmp, *dImgTmp;
 
 	CUDAERR(cudaMalloc((void**)&dImgTmp, width*height), "alloc dImgTmp");
 
-	blur(2, dImg, dImgOut);
+	blur(blurStd, dImg, dImgOut);
 	// img to imgout
 	std::cout << "Performing Sobel filter..." << std::endl;
 	sobel<<<dimGrid, dimBlock>>>(dImgOut, dImg, dImgTmp, height, width);
@@ -218,12 +219,14 @@ __host__ void canny(byte *dImg, byte *dImgOut)
 
 	std::cout << "Performing double thresholding..." << std::endl;
 	edge_thin<<<dimGrid, dimBlock>>>(dImgOut, dImgTmp, height, width,
-		255*0.2, 255*0.4);
+		255*threshold1, 255*threshold2);
 	CUDAERR(cudaGetLastError(), "launch double thresholding kernel");
 
-	std::cout << "Performing hysteresis..." << std::endl;
-	hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
-	CUDAERR(cudaGetLastError(), "launch hysteresis kernel");
+	if (do_hysteresis) {
+		std::cout << "Performing hysteresis..." << std::endl;
+		hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
+		CUDAERR(cudaGetLastError(), "launch hysteresis kernel");
+	}
 
 	// TODO: remove this
 	CUDAERR(cudaMemcpy(dImgOut, dImgTmp, width*height, cudaMemcpyDeviceToDevice),
@@ -241,13 +244,33 @@ __host__ int main(void)
 	std::string inFile, outFile;
 	unsigned i, channels, rowStride, blockSize;
 	byte *hImg, *dImg, *dImgMono, *dImgMonoOut;
+	float blurStd, threshold1, threshold2;
+	bool do_hysteresis;
 
 	// get image name
-	std::cout << "Enter infile (*.png): ";
+	std::cout << "Enter infile (without .png): ";
 	std::cin >> inFile;
 
-	std::cout << "Enter outfile (*.png): ";
+	std::cout << "Enter outfile (without .png): ";
 	std::cin >> outFile;
+
+	std::cout << "Blur stdev: ";
+	std::cin >> blurStd;
+
+	std::cout << "Threshold 1: ";
+	std::cin >> threshold1;
+
+	std::cout << "Threshold 2: ";
+	std::cin >> threshold2;
+
+	std::cout << "Hysteresis? ";
+	std::cin >> do_hysteresis;
+
+	inFile += ".png";
+	outFile += "_bs" + std::to_string(blurStd)
+		+ "_th" + std::to_string(threshold1)
+		+ "_th" + std::to_string(threshold2)
+		+ (do_hysteresis ? "" : "_nohyst") + ".png";
 
 	// get image
 	std::cout << "Reading image from file..." << std::endl;
@@ -292,7 +315,8 @@ __host__ int main(void)
 
 	// canny edge detection
 	std::cout << "Performing canny edge-detection..." << std::endl;
-	canny(dImgMono, dImgMonoOut);
+	canny(dImgMono, dImgMonoOut, blurStd, threshold1, threshold2,
+		do_hysteresis);
 
 	// convert back from grayscale
 	std::cout << "Convert image back to multi-channel..." << std::endl;
