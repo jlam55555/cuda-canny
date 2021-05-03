@@ -75,7 +75,7 @@ __global__ void sobel(byte *img, byte *out, byte *out2, int h, int w)
 		img[(y+1)*w+(x-1)]*1 + img[(y+1)*w+(x+1)]*-1;
 
 	out[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
-	out2[y*w+x] = ((byte)roundf((atan2f(vKer, hKer)+M_PI) / (M_PI/4))) % 4;
+	out2[y*w+x] = (byte)((atan2f(vKer,hKer)+9/8*M_PI)*4/M_PI)&0x3;
 }
 
 // shared memory sobel filter
@@ -98,16 +98,16 @@ __global__ void sobel_shm(byte *img, byte *out, byte *out2, int h, int w)
 
 	// convolution and write-back
 	if (ty>=1 && ty<bs-1 && tx>=1 && tx<bs-1 && y<h && x<w) {
-		vKer = tmp[(ty-1)*bs+(tx-1)]*1 + tmp[(ty-1)*bs+tx]*2 + tmp[(ty-1)*bs+(tx+1)]*1 +
-		       tmp[(ty+1)*bs+(tx-1)]*-1 + tmp[(ty+1)*bs+tx]*-2 + tmp[(ty+1)*bs+(tx+1)]*-1;
+		vKer = tmp[(ty-1)*bs+(tx-1)]*1 + tmp[(ty-1)*bs+tx]*2
+			+ tmp[(ty-1)*bs+(tx+1)]*1 + tmp[(ty+1)*bs+(tx-1)]*-1
+			+ tmp[(ty+1)*bs+tx]*-2 + tmp[(ty+1)*bs+(tx+1)]*-1;
 
 		hKer = tmp[(ty-1)*bs+(tx-1)]*1 + tmp[(ty-1)*bs+(tx+1)]*-1 +
 		       tmp[ty*bs+(tx-1)]*2 + tmp[ty*bs+(tx+1)]*-2 +
 		       tmp[(ty+1)*bs+(tx-1)]*1 + tmp[(ty+1)*bs+(tx+1)]*-1;
 
-		out[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
-		out2[y*w+x] = ((byte)roundf((atan2f(vKer, hKer)+M_PI)
-			 / (M_PI/4))) % 4;
+		out[y*w+x] = sqrtf(hKer*hKer + vKer*vKer);
+		out2[y*w+x] = (byte)((atan2f(vKer,hKer)+9/8*M_PI)*4/M_PI)&0x3;
 	}
 }
 
@@ -151,8 +151,7 @@ __global__ void sobel_sep(byte *img, byte *out, byte *out2, int h, int w)
 		vKer = tmp3[(ty-1)*bs+tx] - tmp3[(ty+1)*bs+tx];
 
 		out[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
-		out2[y*w+x] = ((byte)roundf((atan2f(vKer, hKer)+M_PI)
-			/ (M_PI/4))) % 4;
+		out2[y*w+x] = (byte)((atan2f(vKer,hKer)+9/8*M_PI)*4/M_PI)&0x3;
 	}
 }
 
