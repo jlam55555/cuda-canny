@@ -14,8 +14,13 @@ __global__ void toGrayScale(byte *dImg, byte *dImgMono, int h, int w, int ch)
 	}
 
 	ind = y*w*ch + x*ch;
-	dImgMono[y*w + x] = 0.2989*dImg[ind] + 0.5870*dImg[ind+1]
-		+ 0.1140*dImg[ind+2];
+
+	// >30% speedup in this function when not using fp
+//	dImgMono[y*w + x] = 0.2989*dImg[ind] + 0.5870*dImg[ind+1]
+//		+ 0.1140*dImg[ind+2];
+
+	dImgMono[y*w + x] = (2989*dImg[ind] + 5870*dImg[ind+1]
+		+ 1140*dImg[ind+2])/10000;
 }
 
 // convert back from single channel to multi-channel
