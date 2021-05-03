@@ -13,6 +13,11 @@
 cudaError_t err = cudaSuccess;
 dim3 dimGrid, dimBlock;
 
+#define BLOCKSIZE 32
+#define tx	threadIdx.x
+#define ty	threadIdx.y
+#define bs	BLOCKSIZE
+
 #define CUDAERR(fn, msg)\
 	if ((err = fn) != cudaSuccess) {\
 		std::cerr << "cuda error: " msg " ("\
@@ -58,6 +63,7 @@ __global__ void sobel(byte *img, byte *out, byte *out2, int h, int w)
 	y = blockDim.y*blockIdx.y + threadIdx.y;
 	x = blockDim.x*blockIdx.x + threadIdx.x;
 
+	// make sure not on edge
 	if (y <= 0 || y >= h-1 || x <= 0 || x >= w-1) {
 		return;
 	}
@@ -69,8 +75,50 @@ __global__ void sobel(byte *img, byte *out, byte *out2, int h, int w)
 		img[y*w+(x-1)]*2 + img[y*w+(x+1)]*-2 +
 		img[(y+1)*w+(x-1)]*1 + img[(y+1)*w+(x+1)]*-1;
 
-	out[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
-	out2[y*w+x] = ((byte)roundf((atan2f(vKer, hKer)+M_PI) / (M_PI/4))) % 4;
+	out2[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
+	out[y*w+x] = ((byte)roundf((atan2f(vKer, hKer)+M_PI) / (M_PI/4))) % 4;
+}
+
+// separable sobel filter
+__global__ void sobelsep(byte *img, byte *out, byte *out2, int h, int w)
+{
+	int y, x;
+	bool in_bounds;
+	int vKer, hKer;
+	__shared__ int tmp1[bs*bs], tmp2[bs*bs], tmp3[bs*bs];
+
+	y = (bs-2)*blockIdx.y + threadIdx.y-1;
+	x = (bs-2)*blockIdx.x + threadIdx.x-1;
+
+	// load data from image
+	if (y>=0 && y<h && x>=0 && x<w) {
+		tmp1[ty*bs+tx] = img[y*w+x];
+	}
+
+	__syncthreads();
+
+	// first convolution
+	if (ty>=1 && ty<bs-1 && tx>=0 && tx<bs) {
+		tmp2[ty*bs+tx] = tmp1[(ty-1)*bs+tx]
+			+ (tmp1[ty*bs+tx]<<1) + tmp1[(ty+1)*bs+tx];
+	}
+
+	if (ty>=0 && ty<bs && tx>=1 && tx<bs-1) {
+		tmp3[ty*bs+tx] = tmp1[ty*bs+(tx-1)]
+			+ (tmp1[ty*bs+tx]<<1) + tmp1[ty*bs+(tx+1)];
+	}
+
+	__syncthreads();
+
+	// second convolution and write-back
+	if (ty>=1 && ty<bs-1 && tx>=1 && tx<bs-1 && y<h && x<w) {
+		hKer = tmp2[ty*bs+(tx-1)] - tmp2[ty*bs+(tx+1)];
+		vKer = tmp3[(ty-1)*bs+tx] - tmp3[(ty+1)*bs+tx];
+
+		out2[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
+		out[y*w+x] = ((byte)roundf((atan2f(vKer, hKer)+M_PI)
+			/ (M_PI/4))) % 4;
+	}
 }
 
 // perform edge thinning
@@ -164,7 +212,7 @@ __global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
 __global__ void hysteresis(byte *dImg, int h, int w)
 {
 	int y, x, i;
-	__shared__ int changes;
+	__shared__ byte changes;
 
 	// infer y, x, from block/thread index
 	y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -216,37 +264,42 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 
 	blur(blurStd, dImg, dImgOut);
 
+	// different grid with apron
+	dim3 dimGrid2 = dim3(ceil(width*1./(BLOCKSIZE-2)),
+		       ceil(height*1./(BLOCKSIZE-2)), 1);
+	dim3 dimBlock2 = dim3(BLOCKSIZE, BLOCKSIZE, 1);
+
 	t = clock_start();
 	std::cout << "Performing Sobel filter..." << std::endl;
-	sobel<<<dimGrid, dimBlock>>>(dImgOut, dImg, dImgTmp, height, width);
+	sobelsep<<<dimGrid2, dimBlock2>>>(dImgOut, dImg, dImgTmp, height, width);
 	CUDAERR(cudaGetLastError(), "launch sobel kernel");
 	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
 	clock_lap(t, CLK_SOBEL);
 
-	std::cout << "Performing edge thinning..." << std::endl;
-	edge_thin<<<dimGrid, dimBlock>>>(dImg, dImgTmp, dImgOut, height, width);
-	CUDAERR(cudaGetLastError(), "launch edge thinning kernel");
-	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-	clock_lap(t, CLK_THIN);
-
-	std::cout << "Performing double thresholding..." << std::endl;
-	edge_thin<<<dimGrid, dimBlock>>>(dImgOut, dImgTmp, height, width,
-		255*threshold1, 255*threshold2);
-	CUDAERR(cudaGetLastError(), "launch double thresholding kernel");
-	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-	clock_lap(t, CLK_THRES);
-
-	if (do_hysteresis) {
-		std::cout << "Performing hysteresis..." << std::endl;
-		hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
-		CUDAERR(cudaGetLastError(), "launch hysteresis kernel");
-		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-		clock_lap(t, CLK_HYST);
-	}
+//	std::cout << "Performing edge thinning..." << std::endl;
+//	edge_thin<<<dimGrid, dimBlock>>>(dImg, dImgTmp, dImgOut, height, width);
+//	CUDAERR(cudaGetLastError(), "launch edge thinning kernel");
+//	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+//	clock_lap(t, CLK_THIN);
+//
+//	std::cout << "Performing double thresholding..." << std::endl;
+//	edge_thin<<<dimGrid, dimBlock>>>(dImgOut, dImgTmp, height, width,
+//		255*threshold1, 255*threshold2);
+//	CUDAERR(cudaGetLastError(), "launch double thresholding kernel");
+//	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+//	clock_lap(t, CLK_THRES);
+//
+//	if (do_hysteresis) {
+//		std::cout << "Performing hysteresis..." << std::endl;
+//		hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
+//		CUDAERR(cudaGetLastError(), "launch hysteresis kernel");
+//		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+//		clock_lap(t, CLK_HYST);
+//	}
 
 	// TODO: remove this
-	CUDAERR(cudaMemcpy(dImgOut, dImgTmp, width*height, cudaMemcpyDeviceToDevice),
-		"TESTING");
+	CUDAERR(cudaMemcpy(dImgOut, dImgTmp, width*height,
+		cudaMemcpyDeviceToDevice), "TESTING");
 
 	// dTmp = dImg;
 	// dImg = dImgOut;
@@ -258,7 +311,7 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 __host__ int main(void)
 {
 	std::string inFile, outFile;
-	unsigned i, channels, rowStride, blockSize;
+	unsigned i, channels, rowStride;
 	byte *hImg, *dImg, *dImgMono, *dImgMonoOut;
 	float blurStd, threshold1, threshold2;
 	bool do_hysteresis;
@@ -319,10 +372,9 @@ __host__ int main(void)
 
 	// set kernel parameters (same for all future kernel invocations)
 	// TODO: calculate best grid/block dim depending on the device
-	blockSize = 32;
-	dimGrid = dim3(ceil(rowStride*1./blockSize),
-		ceil(height*1./blockSize), 1);
-	dimBlock = dim3(blockSize, blockSize, 1);
+	dimGrid = dim3(ceil(rowStride*1./BLOCKSIZE),
+		ceil(height*1./BLOCKSIZE), 1);
+	dimBlock = dim3(BLOCKSIZE, BLOCKSIZE, 1);
 
 	// convert to grayscale
 	tOverall = clock_start();
