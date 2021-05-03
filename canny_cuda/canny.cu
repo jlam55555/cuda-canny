@@ -74,7 +74,7 @@ __global__ void sobel(byte *img, byte *out, byte *out2, int h, int w)
 		img[y*w+(x-1)]*2 + img[y*w+(x+1)]*-2 +
 		img[(y+1)*w+(x-1)]*1 + img[(y+1)*w+(x+1)]*-1;
 
-	out[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
+	out[y*w+x] = out[y*w+x] = sqrtf(hKer*hKer + vKer*vKer);
 	out2[y*w+x] = (byte)((atan2f(vKer,hKer)+9/8*M_PI)*4/M_PI)&0x3;
 }
 
@@ -150,7 +150,7 @@ __global__ void sobel_sep(byte *img, byte *out, byte *out2, int h, int w)
 		hKer = tmp2[ty*bs+(tx-1)] - tmp2[ty*bs+(tx+1)];
 		vKer = tmp3[(ty-1)*bs+tx] - tmp3[(ty+1)*bs+tx];
 
-		out[y*w+x] = min(sqrtf(hKer*hKer + vKer*vKer), 255.);
+		out[y*w+x] = sqrtf(hKer*hKer + vKer*vKer);
 		out2[y*w+x] = (byte)((atan2f(vKer,hKer)+9/8*M_PI)*4/M_PI)&0x3;
 	}
 }
@@ -234,15 +234,13 @@ __global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
 }
 
 // check and set neighbor
-#define CAS(cond, x2, y2) \
-	if ((cond) && dImg[(y2)*w+(x2)] == MSK_THR) { \
-		dImg[(y2)*w+(x2)] = MSK_NEW; \
+#define CAS(buf, cond, x2, y2, width) \
+	if ((cond) && buf[(y2)*(width)+(x2)] == MSK_THR) { \
+		buf[(y2)*(width)+(x2)] = MSK_NEW; \
                 changes = 1; \
 	}
 
-// perform 100 iterations of hysteresis
-// 100 -- acts as a heuristic -- should change it to continue until there
-// are no more changes
+// perform one iteration of hysteresis
 __global__ void hysteresis(byte *dImg, int h, int w)
 {
 	int y, x, i;
@@ -267,14 +265,14 @@ __global__ void hysteresis(byte *dImg, int h, int w)
 			dImg[y*w+x] = MSK_DEF;
 
 			// check neighbors
-			CAS(x>0&&y>0,	x-1,	y-1);
-			CAS(y>0,	x,	y-1);
-			CAS(x<w-1&&y>0,	x+1,	y-1);
-			CAS(x<w-1,	x+1,	y);
-			CAS(x<w-1&&y<h-1, x+1,	y+1);
-			CAS(y<h-1,	x,	y+1);
-			CAS(x>0&&y<h-1,	x-1,	y+1);
-			CAS(x>0,	x-1,	y);
+			CAS(dImg,	x>0&&y>0,	x-1,	y-1,	w);
+			CAS(dImg,	y>0,		x,	y-1,	w);
+			CAS(dImg,	x<w-1&&y>0,	x+1,	y-1,	w);
+			CAS(dImg,	x<w-1,		x+1,	y,	w);
+			CAS(dImg,	x<w-1&&y<h-1,	x+1,	y+1,	w);
+			CAS(dImg,	y<h-1,		x,	y+1,	w);
+			CAS(dImg,	x>0&&y<h-1,	x-1,	y+1,	w);
+			CAS(dImg,	x>0,		x-1,	y,	w);
 		}
 
 		__syncthreads();
@@ -283,6 +281,61 @@ __global__ void hysteresis(byte *dImg, int h, int w)
 	// set all threshold1 values to 0
 	if ((x<w && y<h) && dImg[y*w+x] != MSK_DEF) {
 		dImg[y*w+x] = 0;
+	}
+}
+
+// shared memory version of hysteresis
+__global__ void hysteresis_shm(byte *dImg, int h, int w)
+{
+	int y, x, i;
+	__shared__ byte changes, tmp[bs*bs];
+
+	// infer y, x, from block/thread index
+	y = (bs-2)*blockIdx.y + ty-1;
+	x = (bs-2)*blockIdx.x + tx-1;
+
+	if (y>=0 && y<h && x>=0 && x<w) {
+		tmp[ty*bs+tx] = dImg[y*w+x];
+	}
+
+	__syncthreads();
+
+	// check if pixel is connected to its neighbors; continue until
+	// no changes remaining
+	do {
+		changes = 0;
+
+		// make sure inside bounds -- need this here b/c we can't have
+		// __syncthreads() cause a branch divergence in a warp;
+		// see https://stackoverflow.com/a/6667067/2397327
+
+		// if newly-discovered edge, then check its neighbors
+		if ((x<w && y<h) && tmp[ty*bs+tx] == MSK_NEW) {
+			// promote to definitely discovered
+			tmp[ty*bs+tx] = MSK_DEF;
+
+			// check neighbors
+			CAS(tmp, tx>0&&ty>0,		tx-1,	ty-1,	bs);
+			CAS(tmp, ty>0,			tx,	ty-1,	bs);
+			CAS(tmp, tx<bs-1&&x<w-1&&ty>0,	tx+1,	ty-1,	bs);
+			CAS(tmp, tx<bs-1&&x<w-1,	tx+1,	ty,	bs);
+			CAS(tmp, tx<bs-1&&x<w-1&&y<h-1,	tx+1,	ty+1,	bs);
+			CAS(tmp, ty<bs-1&&y<h-1,	tx,	ty+1,	bs);
+			CAS(tmp, tx>0&&ty<bs-1&&y<h-1,	tx-1,	ty+1,	bs);
+			CAS(tmp, tx>0,			tx-1,	ty,	bs);
+		}
+
+		__syncthreads();
+	} while (changes);
+
+	// writeback stage
+	// set all threshold1 values to 0
+	if ((y<h && x<w) && (tx>=1 && tx<bs-1 && ty>=1 && ty<bs-1)) {
+		if (tmp[ty*bs+tx] != MSK_DEF) {
+			dImg[y*w+x] = 0;
+		} else {
+			dImg[y*w+x] = MSK_DEF;
+		}
 	}
 }
 
@@ -330,7 +383,8 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 
 	if (do_hysteresis) {
 		std::cout << "Performing hysteresis..." << std::endl;
-		hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
+//		hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
+		hysteresis_shm<<<dimGrid2, dimBlock2>>>(dImgTmp, height, width);
 		CUDAERR(cudaGetLastError(), "launch hysteresis kernel");
 		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
 		clock_lap(t, CLK_HYST);
