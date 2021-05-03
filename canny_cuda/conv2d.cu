@@ -27,8 +27,6 @@ __global__ void conv2d(byte *d1, float *filt, byte *d3,
 	jmax = min(w1, x+w2/2+1);
 
 	// convolution
-	// TODO: this only deals with the case where filt has a single channel
-	//      (i.e., like a filter)
 	sum = 0;
 	for (i = imin; i < imax; ++i) {
 		for (j = jmin; j < jmax; ++j) {

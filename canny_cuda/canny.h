@@ -16,4 +16,7 @@ __host__ void gaussian_filter(float blurStd, float **fltp, unsigned *fltSizep);
 __global__ void toGrayScale(byte *dImg, byte *dImgMono, int h, int w, int ch);
 __global__ void fromGrayScale(byte *dImgMono, byte *dImg, int h, int w, int ch);
 
+// clock types
+enum { CLOCK_CONV2D, CLOCK_MULTDIV, CLOCK_ROUND, CLOCK_OVERALL };
+
 #endif

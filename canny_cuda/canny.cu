@@ -76,6 +76,7 @@ __global__ void edge_thin(byte *mag, byte *angle, byte *out, int h, int w)
 	y = blockDim.y*blockIdx.y + threadIdx.y;
 	x = blockDim.x*blockIdx.x + threadIdx.x;
 
+	// make sure not on the border
 	if (y <= 0 || y >= h-1 || x <= 0 || x >= w-1) {
 		return;
 	}
@@ -116,6 +117,12 @@ __global__ void edge_thin(byte *mag, byte *angle, byte *out, int h, int w)
 	}
 }
 
+// definitions for the below two functions
+#define MSK_LOW		0x0	// below threshold 1
+#define MSK_THR		0x7f	// at threshold 1
+#define MSK_NEW		0xfe	// at threshold 2, newly discovered
+#define MSK_DEF		0xff	// at threshold 2 and already discovered
+
 // perform double thresholding
 __global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
 {
@@ -124,18 +131,70 @@ __global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
 	y = blockDim.y*blockIdx.y + threadIdx.y;
 	x = blockDim.x*blockIdx.x + threadIdx.x;
 
-	if (y <= 0 || y >= h-1 || x <= 0 || x >= w-1) {
+	if (y >= h || x >= w) {
 		return;
 	}
 
 	ind = y*w + x;
 	grad = dImg[ind];
 	if (grad < t1) {
-		out[ind] = 0;
+		out[ind] = MSK_LOW;
 	} else if (grad < t2) {
-		out[ind] = t2;
+		out[ind] = MSK_THR;
 	} else {
-		out[ind] = 255;
+		out[ind] = MSK_NEW;
+	}
+}
+
+// check and set neighbor
+#define CAS(cond, x2, y2) \
+	if ((cond) && dImg[(y2)*w+(x2)] == MSK_THR) { \
+		dImg[(y2)*w+(x2)] = MSK_NEW; \
+	}
+
+// TODO: remove this; rather check that the hysteresis is complete
+#define HYST_ITER	100
+
+// perform 100 iterations of hysteresis
+// 100 -- acts as a heuristic -- should change it to continue until there
+// are no more changes
+__global__ void hysteresis(byte *dImg, int h, int w)
+{
+	int y, x, i;
+
+	// infer y, x, from block/thread index
+	y = blockDim.y * blockIdx.y + threadIdx.y;
+	x = blockDim.x * blockIdx.x + threadIdx.x;
+
+	// check if pixel is connected to its neighbors
+	// TODO: should change 100 to some dynamic check
+	for (i = 0; i < HYST_ITER; ++i) {
+		// make sure inside bounds -- need this here b/c we can't have
+		// __syncthreads() cause a branch divergence in a warp;
+		// see https://stackoverflow.com/a/6667067/2397327
+
+		// if newly-discovered edge, then check its neighbors
+		if ((x<w && y<h) && dImg[y*w+x] == MSK_NEW) {
+			// promote to definitely discovered
+			dImg[y*w+x] = MSK_DEF;
+
+			// check neighbors
+			CAS(x>0&&y>0,	x-1,	y-1);
+			CAS(y>0,	x,	y-1);
+			CAS(x<w-1&&y>0,	x+1,	y-1);
+			CAS(x<w-1,	x+1,	y);
+			CAS(x<w-1&&y<h-1, x+1,	y+1);
+			CAS(y<h-1,	x,	y+1);
+			CAS(x>0&&y<h-1,	x-1,	y+1);
+			CAS(x>0,	x-1,	y);
+		}
+
+		__syncthreads();
+	}
+
+	// set all threshold1 values to 0
+	if ((x<w && y<h) && dImg[y*w+x] != MSK_DEF) {
+		dImg[y*w+x] = 0;
 	}
 }
 
@@ -146,7 +205,7 @@ __host__ void canny(byte *dImg, byte *dImgOut)
 
 	CUDAERR(cudaMalloc((void**)&dImgTmp, width*height), "alloc dImgTmp");
 
-	blur(1.4, dImg, dImgOut);
+	blur(2, dImg, dImgOut);
 	// img to imgout
 	std::cout << "Performing Sobel filter..." << std::endl;
 	sobel<<<dimGrid, dimBlock>>>(dImgOut, dImg, dImgTmp, height, width);
@@ -155,13 +214,16 @@ __host__ void canny(byte *dImg, byte *dImgOut)
 
 	std::cout << "Performing edge thinning..." << std::endl;
 	edge_thin<<<dimGrid, dimBlock>>>(dImg, dImgTmp, dImgOut, height, width);
-	// 
 	CUDAERR(cudaGetLastError(), "launch edge thinning kernel");
 
 	std::cout << "Performing double thresholding..." << std::endl;
 	edge_thin<<<dimGrid, dimBlock>>>(dImgOut, dImgTmp, height, width,
-		255*0.2, 255*0.5);
+		255*0.2, 255*0.4);
 	CUDAERR(cudaGetLastError(), "launch double thresholding kernel");
+
+	std::cout << "Performing hysteresis..." << std::endl;
+	hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
+	CUDAERR(cudaGetLastError(), "launch hysteresis kernel");
 
 	// TODO: remove this
 	CUDAERR(cudaMemcpy(dImgOut, dImgTmp, width*height, cudaMemcpyDeviceToDevice),
@@ -174,19 +236,22 @@ __host__ void canny(byte *dImg, byte *dImgOut)
 	CUDAERR(cudaFree(dImgTmp), "freeing dImgTmp");
 }
 
-__host__ int main(int argc, char **argv)
+__host__ int main(void)
 {
-	std::string filename;
+	std::string inFile, outFile;
 	unsigned i, channels, rowStride, blockSize;
 	byte *hImg, *dImg, *dImgMono, *dImgMonoOut;
 
 	// get image name
-	std::cout << "Enter filename of image (*.png): ";
-	std::cin >> filename;
+	std::cout << "Enter infile (*.png): ";
+	std::cin >> inFile;
+
+	std::cout << "Enter outfile (*.png): ";
+	std::cin >> outFile;
 
 	// get image
 	std::cout << "Reading image from file..." << std::endl;
-	read_png_file(const_cast<char *>(filename.c_str()));
+	read_png_file(inFile.c_str());
 	channels = color_type==PNG_COLOR_TYPE_RGBA ? 4 : 3;
 	rowStride = width*channels;
 
@@ -248,7 +313,7 @@ __host__ int main(int argc, char **argv)
 
 	// copy image back from device
 	std::cout << "Writing image back to file..." << std::endl;
-	write_png_file("test.png");
+	write_png_file(outFile.c_str());
 
 	// freeing pointers
 	std::cout << "Freeing device memory..." << std::endl;
