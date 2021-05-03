@@ -2,11 +2,11 @@
 #include <unistd.h>
 #include "clock.h"
 
-static int clock_type_counts[TYPES];
-static double clock_total[TYPES];
+static int clock_type_counts[MAX_CLK_TYPES];
+static double clock_total[MAX_CLK_TYPES];
 
 // exported field
-double clock_ave[TYPES];
+double clock_ave[MAX_CLK_TYPES];
 
 clock_t *clock_start(void)
 {
@@ -21,7 +21,7 @@ void clock_lap(clock_t *t, int type)
 {
 	clock_t cur = clock();
 
-	if (type < 0 || type >= TYPES) {
+	if (type < 0 || type >= MAX_CLK_TYPES) {
 		fprintf(stderr, "invalid lap type\n");
 		_exit(-2);
 	}

@@ -1,8 +1,9 @@
-#include "image_prep.h"
-#include "canny.h"
 #include <iostream>
 #include <unistd.h>
 #include <string>
+#include "canny.h"
+#include "image_prep.h"
+#include "clock.h"
 
 // TODO: optimize multiplications!
 // TODO: worry about memory locality later
@@ -24,6 +25,7 @@ __host__ void blur(float blurSize, byte *dImg, byte *dImgOut)
 {
         float *hFlt, *dFlt;
         unsigned fltSize;
+        clock_t *t;
 
         gaussian_filter(blurSize, &hFlt, &fltSize);
 
@@ -35,8 +37,11 @@ __host__ void blur(float blurSize, byte *dImg, byte *dImgOut)
 		cudaMemcpyHostToDevice), "copying hFlt to dFlt");
 
         // blur image (for testing)
+        t = clock_start();
         conv2d<<<dimGrid, dimBlock>>>(dImg, dFlt, dImgOut,
                 height, width, fltSize, fltSize);
+	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+	clock_lap(t, CLK_BLUR);
 
         // cleanup
         free(hFlt);
@@ -203,29 +208,38 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 	float blurStd, float threshold1, float threshold2, bool do_hysteresis)
 {
 	byte *dTmp, *dImgTmp;
+	clock_t *t;
 
 	CUDAERR(cudaMalloc((void**)&dImgTmp, width*height), "alloc dImgTmp");
 
 	blur(blurStd, dImg, dImgOut);
-	// img to imgout
+
+	t = clock_start();
 	std::cout << "Performing Sobel filter..." << std::endl;
 	sobel<<<dimGrid, dimBlock>>>(dImgOut, dImg, dImgTmp, height, width);
-	// imgout -> img / imgtemp
 	CUDAERR(cudaGetLastError(), "launch sobel kernel");
+	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+	clock_lap(t, CLK_SOBEL);
 
 	std::cout << "Performing edge thinning..." << std::endl;
 	edge_thin<<<dimGrid, dimBlock>>>(dImg, dImgTmp, dImgOut, height, width);
 	CUDAERR(cudaGetLastError(), "launch edge thinning kernel");
+	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+	clock_lap(t, CLK_THIN);
 
 	std::cout << "Performing double thresholding..." << std::endl;
 	edge_thin<<<dimGrid, dimBlock>>>(dImgOut, dImgTmp, height, width,
 		255*threshold1, 255*threshold2);
 	CUDAERR(cudaGetLastError(), "launch double thresholding kernel");
+	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+	clock_lap(t, CLK_THRES);
 
 	if (do_hysteresis) {
 		std::cout << "Performing hysteresis..." << std::endl;
 		hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
 		CUDAERR(cudaGetLastError(), "launch hysteresis kernel");
+		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+		clock_lap(t, CLK_HYST);
 	}
 
 	// TODO: remove this
@@ -246,6 +260,7 @@ __host__ int main(void)
 	byte *hImg, *dImg, *dImgMono, *dImgMonoOut;
 	float blurStd, threshold1, threshold2;
 	bool do_hysteresis;
+	clock_t *tGray, *tOverall;
 
 	// get image name
 	std::cout << "Enter infile (without .png): ";
@@ -308,10 +323,15 @@ __host__ int main(void)
 	dimBlock = dim3(blockSize, blockSize, 1);
 
 	// convert to grayscale
+	tOverall = clock_start();
+	tGray = clock_start();
+	cudaDeviceSynchronize();
 	std::cout << "Converting to grayscale..." << std::endl;
 	toGrayScale<<<dimGrid, dimBlock>>>(dImg, dImgMono, height, width,
 		channels);
 	CUDAERR(cudaGetLastError(), "launch toGrayScale kernel");
+	cudaDeviceSynchronize();
+	clock_lap(tGray, CLK_GRAY);
 
 	// canny edge detection
 	std::cout << "Performing canny edge-detection..." << std::endl;
@@ -319,10 +339,14 @@ __host__ int main(void)
 		do_hysteresis);
 
 	// convert back from grayscale
+	tGray = clock_start();
 	std::cout << "Convert image back to multi-channel..." << std::endl;
 	fromGrayScale<<<dimGrid, dimBlock>>>(dImgMonoOut, dImg,
 		height, width, channels);
 	CUDAERR(cudaGetLastError(), "launch fromGrayScale kernel");
+	cudaDeviceSynchronize();
+	clock_lap(tGray, CLK_ALL);
+	clock_lap(tOverall, CLK_ALL);
 
 	// copy image back to host
 	std::cout << "Copy image back to host..." << std::endl;
@@ -344,6 +368,16 @@ __host__ int main(void)
 	CUDAERR(cudaFree(dImg), "freeing dImg");
 	CUDAERR(cudaFree(dImgMono), "freeing dImgMono");
 	CUDAERR(cudaFree(dImgMonoOut), "freeing dImgMonoOut");
+
+	// print times
+	// print timing statistics
+	std::cout << "grayscale:\t" << clock_ave[CLK_GRAY] << "s" << std::endl
+		<< "blur:\t\t" << clock_ave[CLK_BLUR] << "s" << std::endl
+		<< "sobel\t\t" << clock_ave[CLK_SOBEL] << "s" << std::endl
+		<< "edgethin:\t" << clock_ave[CLK_THIN] << "s" << std::endl
+		<< "threshold:\t" << clock_ave[CLK_THRES] << "s" << std::endl
+		<< "hysteresis:\t" << clock_ave[CLK_HYST] << "s" << std::endl
+		<< "overall:\t" << clock_ave[CLK_ALL] << "s" << std::endl;
 
 	std::cout << "Done." << std::endl;
 }

@@ -4,11 +4,11 @@
 #define CLOCK_H
 
 // maximum number of different things to benchmark (here arbitrarily set to 5)
-#define TYPES 5
+#define MAX_CLK_TYPES 10
 
 #include <time.h>
 
-extern double clock_ave[TYPES];
+extern double clock_ave[MAX_CLK_TYPES];
 
 clock_t *clock_start(void);
 void clock_lap(clock_t *t, int type);

@@ -17,6 +17,6 @@ __global__ void toGrayScale(byte *dImg, byte *dImgMono, int h, int w, int ch);
 __global__ void fromGrayScale(byte *dImgMono, byte *dImg, int h, int w, int ch);
 
 // clock types
-enum { CLOCK_CONV2D, CLOCK_MULTDIV, CLOCK_ROUND, CLOCK_OVERALL };
+enum { CLK_ALL, CLK_GRAY, CLK_BLUR, CLK_SOBEL, CLK_THIN, CLK_THRES, CLK_HYST };
 
 #endif
