@@ -155,10 +155,8 @@ __global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
 #define CAS(cond, x2, y2) \
 	if ((cond) && dImg[(y2)*w+(x2)] == MSK_THR) { \
 		dImg[(y2)*w+(x2)] = MSK_NEW; \
+                changes = 1; \
 	}
-
-// TODO: remove this; rather check that the hysteresis is complete
-#define HYST_ITER	100
 
 // perform 100 iterations of hysteresis
 // 100 -- acts as a heuristic -- should change it to continue until there
@@ -166,14 +164,17 @@ __global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
 __global__ void hysteresis(byte *dImg, int h, int w)
 {
 	int y, x, i;
+	__shared__ int changes;
 
 	// infer y, x, from block/thread index
 	y = blockDim.y * blockIdx.y + threadIdx.y;
 	x = blockDim.x * blockIdx.x + threadIdx.x;
 
-	// check if pixel is connected to its neighbors
-	// TODO: should change 100 to some dynamic check
-	for (i = 0; i < HYST_ITER; ++i) {
+	// check if pixel is connected to its neighbors; continue until
+	// no changes remaining
+	do {
+		changes = 0;
+
 		// make sure inside bounds -- need this here b/c we can't have
 		// __syncthreads() cause a branch divergence in a warp;
 		// see https://stackoverflow.com/a/6667067/2397327
@@ -195,7 +196,7 @@ __global__ void hysteresis(byte *dImg, int h, int w)
 		}
 
 		__syncthreads();
-	}
+	} while (changes);
 
 	// set all threshold1 values to 0
 	if ((x<w && y<h) && dImg[y*w+x] != MSK_DEF) {
@@ -209,6 +210,7 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 {
 	byte *dTmp, *dImgTmp;
 	clock_t *t;
+	int i;
 
 	CUDAERR(cudaMalloc((void**)&dImgTmp, width*height), "alloc dImgTmp");
 
