@@ -5,8 +5,9 @@
 #include <unistd.h>
 #include <math.h>
 #include "blur.h"
-#include "/Users/leonfang/Sobel_filter/image_prep.h"
-#include "/Users/leonfang/Sobel_filter/sobel.h"
+#include "../sobel/image_prep.h"
+#include "../sobel/sobel.h"
+
 typedef unsigned char byte;
 
 void blur(float blurSize, byte *dImg, byte *dImgOut)
