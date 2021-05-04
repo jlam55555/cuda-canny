@@ -30,7 +30,9 @@ void sobelv2(byte *input, byte *output,byte* output2, int h, int w){
 	        hKer = img[(y-1)*w+(x-1)]*1 + img[(y-1)*w+(x+1)]*-1 + img[y*w+(x-1)]*2 + img[y*w+(x+1)]*-2 +
 		        img[(y+1)*w+(x-1)]*1 + img[(y+1)*w+(x+1)]*-1;
 
+            // Gradient strength
             output[y*w+x] = fmin(sqrtf(hKer*hKer + vKer*vKer), 255.);
+            // Direction
 	        output2[y*w+x] = ((byte)roundf((atan2f(vKer, hKer)+M_PI) / (M_PI/4))) % 4;
         }
     }

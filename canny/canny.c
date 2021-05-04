@@ -7,6 +7,10 @@
 #include "blur.h"
 #include "../image_prep.h"
 #include "../sobel.h"
+
+#define upper_threshold 96
+#define lower_threshold 144
+
 typedef unsigned char byte;
 
 void blur(float blurSize, byte *dImg, byte *dImgOut)
@@ -86,7 +90,22 @@ void edge_thin_double(byte* input, byte* output, int h, int w)
                 }
         }
 }	
-
+void hysteresis(byte *gradiant, byte *pixel,int height, int width){
+        int x, y;
+        for(y = 0; y < height; y++){
+                for(x = 0; x < width; x++){
+                        int index = y*width + height;
+                        if(gradiant[index] > upper_threshold){
+                                // sure its an edge
+                                printf("");
+                        }else if(gradiant[index] < lower_threshold){
+                                // check if its connected
+                        }else{
+                                // sure ignore this
+                        }
+                }
+        }
+}
 int main(int argc, char** argv){
     if(argc < 2){
         printf("ERR: %d MSG: %s",-1,"Usage: ./canny [input.png] [output.png]");
@@ -121,6 +140,8 @@ int main(int argc, char** argv){
     
     printf("Performing Sobel filter...\n");
     sobelv2(ImgMonoOut,ImgMono,ImgTemp,height,width);
+//ImgMono: net Gradient 
+//ImgTemp: direction
 
     printf("Performing Edge thinning...\n");
     edge_thin(ImgMono,ImgTemp,ImgMonoOut,height,width);
@@ -128,11 +149,28 @@ int main(int argc, char** argv){
     printf("Performing Double thresholding...\n");
     edge_thin_double(ImgMonoOut,ImgTemp,height,width);
     
+    printf("Performing Hysteresis Thresholding...\n");
+    // using ImgTemp
+    //hysteresis(ImgTemp);
+
     // convert back from grayscale
     printf("Convert image back to multi-channel...\n");
-    fromGreyScale(ImgMonoOut,Img,height,width,channels);
+    fromGreyScale(ImgTemp,Img,height,width,channels);
     
     clock_t end = clock();
+
+/*
+        int x,y;
+        for(y = 0; y < height; y++){
+                for(x = 0; x < width; x++){
+                        int ind = y*width + x;
+                        printf("%d ",ImgMonoOut[ind]);
+                }
+                printf("\n");
+        }
+        */
+       
+
 
     // copy image back to row_pointers
     printf("Copy image back to row_pointers...\n");
