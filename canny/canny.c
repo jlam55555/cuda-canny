@@ -8,8 +8,8 @@
 #include "../image_prep.h"
 #include "../sobel.h"
 
-#define upper_threshold 96
-#define lower_threshold 144
+#define threshold_1 64
+#define threshold_2 0x90
 
 typedef unsigned char byte;
 
@@ -90,18 +90,49 @@ void edge_thin_double(byte* input, byte* output, int h, int w)
                 }
         }
 }	
-void hysteresis(byte *gradiant, byte *pixel,int height, int width){
+
+void bfs(byte* input, int x, int y, int width, int height, int* changes){
+        
+        if(x >= width || y >= height || x < 0 || y < 0){
+                return;
+        }
+        int index = y*width + x;
+        if(input[index] == threshold_1){
+                input[index] = threshold_2;
+                *changes = 1;
+        }
+
+}
+
+void hysteresis(byte *gradiant,int height, int width){
         int x, y;
+        int changes;
         for(y = 0; y < height; y++){
                 for(x = 0; x < width; x++){
-                        int index = y*width + height;
-                        if(gradiant[index] > upper_threshold){
-                                // sure its an edge
-                                printf("");
-                        }else if(gradiant[index] < lower_threshold){
-                                // check if its connected
-                        }else{
-                                // sure ignore this
+                        changes = 0;
+                        int index = y * width + x;
+                        do{
+                                if(gradiant[index] == threshold_2){
+                                        gradiant[index] = 255;
+                                        bfs(gradiant, x+1,y+1,height,width,&changes);
+                                        bfs(gradiant, x+1,y,height,width,&changes);
+                                        bfs(gradiant, x+1,y-1,height,width,&changes);
+                                        bfs(gradiant, x,y+1,height,width,&changes);
+                                        bfs(gradiant, x,y-1,height,width,&changes);
+                                        bfs(gradiant, x-1,y+1,height,width,&changes);
+                                        bfs(gradiant, x-1,y,height,width,&changes);
+                                        bfs(gradiant, x-1,y-1,height,width,&changes);
+                                }
+                                printf("changes: %d \n",changes);
+                        }while (changes);
+                        
+                }
+        }
+        for(y = 0; y < height; y++){
+                for(x = 0; x < width; x++){
+                        int index = y * width + x;
+                        if(gradiant[index] != 255){
+                                gradiant[index] = 0;
                         }
                 }
         }
@@ -151,7 +182,7 @@ int main(int argc, char** argv){
     
     printf("Performing Hysteresis Thresholding...\n");
     // using ImgTemp
-    //hysteresis(ImgTemp);
+    hysteresis(ImgTemp,height,width);
 
     // convert back from grayscale
     printf("Convert image back to multi-channel...\n");
