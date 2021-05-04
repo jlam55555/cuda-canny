@@ -206,8 +206,8 @@ __global__ void edge_thin(byte *mag, byte *angle, byte *out, int h, int w)
 
 // definitions for the below two functions
 #define MSK_LOW		0x0	// below threshold 1
-#define MSK_THR		0x7f	// at threshold 1
-#define MSK_NEW		0xfe	// at threshold 2, newly discovered
+#define MSK_THR		0x60	// at threshold 1
+#define MSK_NEW		0x90	// at threshold 2, newly discovered
 #define MSK_DEF		0xff	// at threshold 2 and already discovered
 
 // perform double thresholding
@@ -241,7 +241,7 @@ __global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
 	}
 
 // perform one iteration of hysteresis
-__global__ void hysteresis(byte *dImg, int h, int w)
+__global__ void hysteresis(byte *dImg, int h, int w, bool final)
 {
 	int y, x, i;
 	__shared__ byte changes;
@@ -279,20 +279,23 @@ __global__ void hysteresis(byte *dImg, int h, int w)
 	} while (changes);
 
 	// set all threshold1 values to 0
-	if ((x<w && y<h) && dImg[y*w+x] != MSK_DEF) {
+	if (final && (x<w && y<h) && dImg[y*w+x] != MSK_DEF) {
 		dImg[y*w+x] = 0;
 	}
 }
 
 // shared memory version of hysteresis
-__global__ void hysteresis_shm(byte *dImg, int h, int w)
+__global__ void hysteresis_shm(byte *dImg, int h, int w, bool final)
 {
 	int y, x, i;
+	bool in_bounds;
 	__shared__ byte changes, tmp[bs*bs];
 
 	// infer y, x, from block/thread index
 	y = (bs-2)*blockIdx.y + ty-1;
 	x = (bs-2)*blockIdx.x + tx-1;
+
+	in_bounds = (x<w && y<h) && (tx>=1 && tx<bs-1 && ty>=1 && ty<bs-1);
 
 	if (y>=0 && y<h && x>=0 && x<w) {
 		tmp[ty*bs+tx] = dImg[y*w+x];
@@ -310,38 +313,37 @@ __global__ void hysteresis_shm(byte *dImg, int h, int w)
 		// see https://stackoverflow.com/a/6667067/2397327
 
 		// if newly-discovered edge, then check its neighbors
-		if ((x<w && y<h) && tmp[ty*bs+tx] == MSK_NEW) {
+		if (in_bounds && tmp[ty*bs+tx] == MSK_NEW) {
 			// promote to definitely discovered
 			tmp[ty*bs+tx] = MSK_DEF;
 
 			// check neighbors
-			CAS(tmp, tx>0&&ty>0,		tx-1,	ty-1,	bs);
-			CAS(tmp, ty>0,			tx,	ty-1,	bs);
-			CAS(tmp, tx<bs-1&&x<w-1&&ty>0,	tx+1,	ty-1,	bs);
-			CAS(tmp, tx<bs-1&&x<w-1,	tx+1,	ty,	bs);
-			CAS(tmp, tx<bs-1&&x<w-1&&y<h-1,	tx+1,	ty+1,	bs);
-			CAS(tmp, ty<bs-1&&y<h-1,	tx,	ty+1,	bs);
-			CAS(tmp, tx>0&&ty<bs-1&&y<h-1,	tx-1,	ty+1,	bs);
-			CAS(tmp, tx>0,			tx-1,	ty,	bs);
+			CAS(tmp, 1,		tx-1,	ty-1,	bs);
+			CAS(tmp, 1,		tx,	ty-1,	bs);
+			CAS(tmp, x<w-1,		tx+1,	ty-1,	bs);
+			CAS(tmp, x<w-1,		tx+1,	ty,	bs);
+			CAS(tmp, x<w-1&&y<h-1,	tx+1,	ty+1,	bs);
+			CAS(tmp, y<h-1,		tx,	ty+1,	bs);
+			CAS(tmp, y<h-1,		tx-1,	ty+1,	bs);
+			CAS(tmp, 1,		tx-1,	ty,	bs);
 		}
 
 		__syncthreads();
 	} while (changes);
 
-	// writeback stage
-	// set all threshold1 values to 0
-	if ((y<h && x<w) && (tx>=1 && tx<bs-1 && ty>=1 && ty<bs-1)) {
-		if (tmp[ty*bs+tx] != MSK_DEF) {
-			dImg[y*w+x] = 0;
-		} else {
-			dImg[y*w+x] = MSK_DEF;
+	if (final) {
+		if (in_bounds) {
+			dImg[y*w+x] = MSK_DEF * (tmp[ty*bs+tx] == MSK_DEF);
 		}
+	} else if (y>=0 && y<h && x>=0 && x<w && tmp[ty*bs+tx] > dImg[y*w+x]) {
+		dImg[y*w+x] = tmp[ty*bs+tx];
 	}
 }
 
 // perform canny edge detection
 __host__ void canny(byte *dImg, byte *dImgOut,
-	float blurStd, float threshold1, float threshold2, bool do_hysteresis)
+	float blurStd, float threshold1, float threshold2,
+	bool do_hysteresis, int hyst_iters)
 {
 	byte *dTmp, *dImgTmp;
 	clock_t *t;
@@ -383,11 +385,17 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 
 	if (do_hysteresis) {
 		std::cout << "Performing hysteresis..." << std::endl;
-//		hysteresis<<<dimGrid, dimBlock>>>(dImgTmp, height, width);
-		hysteresis_shm<<<dimGrid2, dimBlock2>>>(dImgTmp, height, width);
-		CUDAERR(cudaGetLastError(), "launch hysteresis kernel");
-		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-		clock_lap(t, CLK_HYST);
+		for (i = 0; i < hyst_iters; ++i) {
+//			hysteresis<<<dimGrid, dimBlock>>>(dImgTmp,
+//				height, width, i==hyst_iters-1);
+			hysteresis_shm<<<dimGrid2, dimBlock2>>>(dImgTmp,
+				height, width, i==hyst_iters-1);
+			CUDAERR(cudaGetLastError(),
+	   			"launch hysteresis kernel");
+			CUDAERR(cudaDeviceSynchronize(),
+	   			"cudaDeviceSynchronize()");
+			clock_lap(t, CLK_HYST);
+		}
 	}
 
 	// TODO: remove this
@@ -482,9 +490,9 @@ __host__ int main(void)
 	dimBlock = dim3(bs, bs, 1);
 
 	// convert to grayscale
+	cudaDeviceSynchronize();
 	tOverall = clock_start();
 	tGray = clock_start();
-	cudaDeviceSynchronize();
 	std::cout << "Converting to grayscale..." << std::endl;
 	toGrayScale<<<dimGrid, dimBlock>>>(dImg, dImgMono, height, width,
 		channels);
@@ -495,7 +503,7 @@ __host__ int main(void)
 	// canny edge detection
 	std::cout << "Performing canny edge-detection..." << std::endl;
 	canny(dImgMono, dImgMonoOut, blurStd, threshold1, threshold2,
-		do_hysteresis);
+		do_hysteresis, 5);
 
 	// convert back from grayscale
 	tGray = clock_start();
