@@ -1,5 +1,3 @@
-#include <iostream>
-#include <unistd.h>
 #include <string>
 #include "canny.h"
 #include "image_prep.h"
@@ -13,43 +11,70 @@
 cudaError_t err = cudaSuccess;
 dim3 dimGrid, dimBlock;
 
-#define tx	threadIdx.x
-#define ty	threadIdx.y
-#define bs	32		// block size
-
-#define CUDAERR(fn, msg)\
-	if ((err = fn) != cudaSuccess) {\
-		std::cerr << "cuda error: " msg " ("\
-			<< cudaGetErrorString(err) << ")" << std::endl;\
-		_exit(-1);\
-	}
-
 // performs a gaussian blur on an image
 __host__ void blur(float blurSize, byte *dImg, byte *dImgOut)
 {
-        float *hFlt, *dFlt;
+        float *hFlt;
         unsigned fltSize;
         clock_t *t;
 
         gaussian_filter(blurSize, &hFlt, &fltSize);
+	setFilter(hFlt, fltSize*fltSize*sizeof(float));
 
         // allocate and copy filter to device
-	CUDAERR(cudaMalloc((void **) &dFlt, fltSize*fltSize*sizeof(float)),
-		"allocating dFlt");
+//	CUDAERR(cudaMalloc((void **) &dFlt, fltSize*fltSize*sizeof(float)),
+//		"allocating dFlt");
 
-	CUDAERR(cudaMemcpy(dFlt, hFlt, fltSize*fltSize*sizeof(float),
-		cudaMemcpyHostToDevice), "copying hFlt to dFlt");
+//	CUDAERR(cudaMemcpy(dFlt, hFlt, fltSize*fltSize*sizeof(float),
+//		cudaMemcpyHostToDevice), "copying hFlt to dFlt");
 
-        // blur image (for testing)
+        // blur image
         t = clock_start();
-        conv2d<<<dimGrid, dimBlock>>>(dImg, dFlt, dImgOut,
+        conv2d<<<dimGrid, dimBlock>>>(dImg, dImgOut,
                 height, width, fltSize, fltSize);
 	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
 	clock_lap(t, CLK_BLUR);
 
         // cleanup
         free(hFlt);
-        CUDAERR(cudaFree(dFlt), "freeing dFlt");
+//        CUDAERR(cudaFree(dFlt), "freeing dFlt");
+}
+
+// performs a separable gaussian blur on an image (also using shm)
+__host__ void blur_sep(float blurSize, byte *dImg, byte *dImgOut)
+{
+	float *hFlt;
+	unsigned fltSize, as;
+	clock_t *t;
+
+	gaussian_filter_1d(blurSize, &hFlt, &fltSize);
+	setFilter(hFlt, fltSize*sizeof(float));
+	as = fltSize/2;
+	std::cout << "Blur filter size: " << fltSize << std::endl;
+
+	dim3 dimGrid2 = dim3(ceil(width*1./(lbs-2*as)), ceil(height*1./sbs), 1);
+	dim3 dimBlock2 = dim3(lbs, sbs, 1);
+
+	dim3 dimGrid3 = dim3(ceil(width*1./sbs), ceil(height*1./(lbs-2*as)), 1);
+	dim3 dimBlock3 = dim3(sbs, lbs, 1);
+
+	// blur image
+	t = clock_start();
+	conv1dRows<<<dimGrid2, dimBlock2>>>(dImg, dImgOut,
+		height, width, fltSize);
+	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+
+	conv1dCols<<<dimGrid3, dimBlock3>>>(dImgOut, dImg,
+		height, width, fltSize);
+	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+	clock_lap(t, CLK_BLUR);
+
+	// TODO: remove this
+	CUDAERR(cudaMemcpy(dImgOut, dImg, width*height,
+		cudaMemcpyDeviceToDevice), "TESTING");
+
+	// cleanup
+	free(hFlt);
 }
 
 // basic sobel kernel
@@ -354,7 +379,8 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 
 	CUDAERR(cudaMalloc((void**)&dImgTmp, width*height), "alloc dImgTmp");
 
-	blur(blurStd, dImg, dImgOut);
+//	blur(blurStd, dImg, dImgOut);
+	blur_sep(blurStd, dImg, dImgOut);
 
 	// different grid with 1-width apron for shared-memory schemes
 	dim3 dimGrid2 = dim3(ceil(width*1./(bs-2)), ceil(height*1./(bs-2)), 1);
