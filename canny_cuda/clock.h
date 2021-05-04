@@ -9,6 +9,7 @@
 #include <time.h>
 
 extern double clock_ave[MAX_CLK_TYPES];
+extern double clock_total[MAX_CLK_TYPES];
 
 clock_t *clock_start(void);
 void clock_lap(clock_t *t, int type);

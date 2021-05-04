@@ -331,11 +331,14 @@ __global__ void hysteresis_shm(byte *dImg, int h, int w, bool final)
 		__syncthreads();
 	} while (changes);
 
+	// in final round, only color interior
 	if (final) {
 		if (in_bounds) {
 			dImg[y*w+x] = MSK_DEF * (tmp[ty*bs+tx] == MSK_DEF);
 		}
-	} else if (y>=0 && y<h && x>=0 && x<w && tmp[ty*bs+tx] > dImg[y*w+x]) {
+	}
+	// in non-final round, update if better
+	else if (y>=0 && y<h && x>=0 && x<w && tmp[ty*bs+tx] > dImg[y*w+x]) {
 		dImg[y*w+x] = tmp[ty*bs+tx];
 	}
 }
@@ -419,6 +422,7 @@ __host__ void print_timings(void)
 		<< "edgethin:\t" << clock_ave[CLK_THIN] << "s" << std::endl
 		<< "threshold:\t" << clock_ave[CLK_THRES] << "s" << std::endl
 		<< "hysteresis:\t" << clock_ave[CLK_HYST] << "s" << std::endl
+		<< "hyst total:\t" << clock_total[CLK_HYST] << "s" << std::endl
 		<< "overall:\t" << clock_ave[CLK_ALL] << "s" << std::endl;
 }
 
@@ -512,7 +516,7 @@ __host__ int main(void)
 		height, width, channels);
 	CUDAERR(cudaGetLastError(), "launch fromGrayScale kernel");
 	cudaDeviceSynchronize();
-	clock_lap(tGray, CLK_ALL);
+	clock_lap(tGray, CLK_GRAY);
 	clock_lap(tOverall, CLK_ALL);
 
 	// copy image back to host

@@ -3,10 +3,10 @@
 #include "clock.h"
 
 static int clock_type_counts[MAX_CLK_TYPES];
-static double clock_total[MAX_CLK_TYPES];
 
-// exported field
+// exported fields
 double clock_ave[MAX_CLK_TYPES];
+double clock_total[MAX_CLK_TYPES];
 
 clock_t *clock_start(void)
 {
