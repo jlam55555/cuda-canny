@@ -4,12 +4,15 @@
 #include <string.h>
 #include <unistd.h>
 #include <math.h>
+#include <stdbool.h>
 #include "blur.h"
 #include "../image_prep.h"
 #include "../sobel.h"
 
 #define threshold_1 64
 #define threshold_2 0x90
+#define ThresholdL 51
+#define ThresholdH 102
 
 typedef unsigned char byte;
 
@@ -92,125 +95,121 @@ void edge_thin_double(byte* input, byte* output, int h, int w)
 }	
 
 void bfs(byte* input, int x, int y, int width, int height, int* changes){
-        
+        printf("Performing bfs");
         if(x >= width || y >= height || x < 0 || y < 0){
                 return;
         }
         int index = y*width + x;
-        if(input[index] == threshold_1){
+        if(input[index] >= threshold_1){
                 input[index] = threshold_2;
+                printf("change!!!");
                 *changes = 1;
         }
 
 }
+bool checkInRang(int r,int c, int rows, int cols){
+	if (r >= 0 && r < rows && c >= 0 && c < cols)
+		return true;
+	else{
+                return false;
+        }
+}
 
-void hysteresis(byte *gradiant,int height, int width){
+//从确定边缘点出发，延长边缘
+void trace(byte* edgeMag_noMaxsup, byte* edge, int TL, int y, int x, int height, int width){
+        int index = y * width + x;
+        if (edge[index] == 0){
+		edge[index] = 255;
+                int i, j;
+		for (int i = -1; i <= 1; ++i){
+			for (int j = -1; j <= 1; ++j){
+                                int sub_index = (y+i)*width + (x+j);
+				float mag = edgeMag_noMaxsup[sub_index];
+				if (checkInRang(y + i, x + j, height, width) && mag >= TL)
+					trace(edgeMag_noMaxsup, edge, TL, y + i, x + j, height, width);
+			}
+		}
+	}
+}
+// 255 white
+// 0 black
+void hysteresis(byte *gradiant,byte* edge,int height, int width){
         int x, y;
         int changes;
         for(y = 0; y < height; y++){
                 for(x = 0; x < width; x++){
-                        changes = 0;
                         int index = y * width + x;
-                        do{
-                                if(gradiant[index] == threshold_2){
-                                        gradiant[index] = 255;
-                                        bfs(gradiant, x+1,y+1,height,width,&changes);
-                                        bfs(gradiant, x+1,y,height,width,&changes);
-                                        bfs(gradiant, x+1,y-1,height,width,&changes);
-                                        bfs(gradiant, x,y+1,height,width,&changes);
-                                        bfs(gradiant, x,y-1,height,width,&changes);
-                                        bfs(gradiant, x-1,y+1,height,width,&changes);
-                                        bfs(gradiant, x-1,y,height,width,&changes);
-                                        bfs(gradiant, x-1,y-1,height,width,&changes);
-                                }
-                                printf("changes: %d \n",changes);
-                        }while (changes);
-                        
-                }
-        }
-        for(y = 0; y < height; y++){
-                for(x = 0; x < width; x++){
-                        int index = y * width + x;
-                        if(gradiant[index] != 255){
-                                gradiant[index] = 0;
+                        if(gradiant[index] >= ThresholdH){
+                                trace(gradiant,edge,ThresholdL,y,x,height,width);
+                        }else if(gradiant[index] < ThresholdL){
+                                edge[index] = 0;
                         }
                 }
         }
 }
 int main(int argc, char** argv){
-    if(argc < 2){
-        printf("ERR: %d MSG: %s",-1,"Usage: ./canny [input.png] [output.png]");
-        exit(-1);
-        //ERRMSG(-1,"USAGE:./main [input.png] [output.png]")
-    }
-    int i,j;
-    byte *Img, *ImgMono, *ImgMonoOut;
-    unsigned channels, rowStride, blockSize;
-    printf("Reading the image...\n");
-    read_png_file("/Users/leonfang/Sobel_filter/canny/star.png");
-    channels = color_type==PNG_COLOR_TYPE_RGBA ? 4 : 3;
-    rowStride = width*channels;
-
-    printf("channel is :%d\n", channels);
-    printf("Allocating space...\n");
-    Img = (byte*)malloc(width * height * channels);
-    ImgMono = (byte*)malloc(width * height);
-    ImgMonoOut = (byte*)malloc(width * height);
-    byte* ImgTemp = (byte*)malloc(width * height);
-    
-    for (i = 0; i < height; ++i) {
-        memcpy(Img + i*rowStride, row_pointers[i], rowStride);
-    }
-    clock_t begin = clock();
-    // convert to grayscale
-    printf("Converting to grayscale...\n");
-    toGreyScale(Img,ImgMono,height,width,channels);
-
-    printf("Performing Gaussian blurring...........\n");
-    blur(1.4,ImgMono,ImgMonoOut);
-    
-    printf("Performing Sobel filter...\n");
-    sobelv2(ImgMonoOut,ImgMono,ImgTemp,height,width);
-//ImgMono: net Gradient 
-//ImgTemp: direction
-
-    printf("Performing Edge thinning...\n");
-    edge_thin(ImgMono,ImgTemp,ImgMonoOut,height,width);
-    
-    printf("Performing Double thresholding...\n");
-    edge_thin_double(ImgMonoOut,ImgTemp,height,width);
-    
-    printf("Performing Hysteresis Thresholding...\n");
-    // using ImgTemp
-    hysteresis(ImgTemp,height,width);
-
-    // convert back from grayscale
-    printf("Convert image back to multi-channel...\n");
-    fromGreyScale(ImgTemp,Img,height,width,channels);
-    
-    clock_t end = clock();
-
-/*
-        int x,y;
-        for(y = 0; y < height; y++){
-                for(x = 0; x < width; x++){
-                        int ind = y*width + x;
-                        printf("%d ",ImgMonoOut[ind]);
-                }
-                printf("\n");
+        if(argc < 2){
+                printf("ERR: %d MSG: %s",-1,"Usage: ./canny [input.png] [output.png]");
+                exit(-1);
         }
-        */
-       
+        int i,j;
+        byte *Img, *ImgMono, *ImgMonoOut;
+        unsigned channels, rowStride, blockSize;
+        printf("Reading the image...\n");
+        read_png_file(argv[1]);
+        channels = color_type==PNG_COLOR_TYPE_RGBA ? 4 : 3;
+        rowStride = width*channels;
+
+        printf("channel is :%d\n", channels);
+        printf("Allocating space...\n");
+        Img = (byte*)malloc(width * height * channels);
+        ImgMono = (byte*)malloc(width * height);
+        ImgMonoOut = (byte*)malloc(width * height);
+        byte* ImgTemp = (byte*)malloc(width * height);
+
+        for (i = 0; i < height; ++i) {
+                memcpy(Img + i*rowStride, row_pointers[i], rowStride);
+        }
+        clock_t begin = clock();
+        // convert to grayscale
+        printf("Converting to grayscale...\n");
+        toGreyScale(Img,ImgMono,height,width,channels);
+
+        printf("Performing Gaussian blurring...........\n");
+        blur(2,ImgMono,ImgMonoOut);
+
+        printf("Performing Sobel filter...\n");
+        sobelv2(ImgMonoOut,ImgMono,ImgTemp,height,width);
+                //ImgMono: net Gradient 
+                //ImgTemp: direction
+
+        printf("Performing Edge thinning...\n");
+        edge_thin(ImgMono,ImgTemp,ImgMonoOut,height,width);
+
+        printf("Performing Double thresholding...\n");
+        edge_thin_double(ImgMonoOut,ImgTemp,height,width);
+
+        printf("Performing Hysteresis Thresholding...\n");
+        // using ImgTemp
+        byte* edge = (byte*)calloc(height*width,sizeof(byte));
+
+        hysteresis(ImgTemp,edge,height,width);
+
+        // convert back from grayscale
+        printf("Convert image back to multi-channel...\n");
+        fromGreyScale(edge,Img,height,width,channels);
+
+        clock_t end = clock();
 
 
-    // copy image back to row_pointers
-    printf("Copy image back to row_pointers...\n");
-    for (i = 0; i < height; i++) {
-	memcpy(row_pointers[i],Img + i*rowStride, rowStride);
-    }
-    printf("Writing image back to file...\n");
-    write_png_file("/Users/leonfang/Sobel_filter/canny/test.png");
-    printf("Done...\n");
-    printf("time cost: %f\n",(double)(end-begin)/CLOCKS_PER_SEC);
-    return 0;
+        // copy image back to row_pointers
+        printf("Copy image back to row_pointers...\n");
+        for (i = 0; i < height; i++) {
+                memcpy(row_pointers[i],Img + i*rowStride, rowStride);
+        }
+        printf("Writing image back to file...\n");
+        write_png_file(argv[2]);
+        printf("Done...\n");
+        printf("time cost: %f\n",(double)(end-begin)/CLOCKS_PER_SEC);
+        return 0;
 }

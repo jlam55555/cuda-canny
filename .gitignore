@@ -1,6 +1,10 @@
 # object files
 *.o
 
+# debug config file
+launch.json
+settings.json
+tasks.json
 
 # dSYM file
 *.dSYM

@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${fileDirname}/${fileBasenameNoExtension}",
             "args": [
-                "/Users/leonfang/Sobel_filter/canny/start.png",
+                "/Users/leonfang/Sobel_filter/canny/star.png",
                 "/Users/leonfang/Sobel_filter/canny/test.png"
             ],
             "stopAtEntry": false,
