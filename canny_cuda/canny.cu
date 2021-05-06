@@ -497,7 +497,7 @@ __host__ int main(void)
 	std::cout << "Threshold 2: ";
 	std::cin >> threshold2;
 
-	std::cout << "Hysteresis? ";
+	std::cout << "Hysteresis iters: ";
 	std::cin >> hystIters;
 
 	std::cout << "Sync after each kernel? ";
