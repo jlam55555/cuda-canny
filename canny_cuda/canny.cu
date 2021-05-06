@@ -10,6 +10,7 @@
 
 cudaError_t err = cudaSuccess;
 dim3 dimGrid, dimBlock;
+bool doSync = true;
 
 // performs a gaussian blur on an image
 __host__ void blur(float blurSize, byte *dImg, byte *dImgOut)
@@ -32,8 +33,10 @@ __host__ void blur(float blurSize, byte *dImg, byte *dImgOut)
         t = clock_start();
         conv2d<<<dimGrid, dimBlock>>>(dImg, dImgOut,
                 height, width, fltSize, fltSize);
-	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-	clock_lap(t, CLK_BLUR);
+        if (doSync) {
+		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+		clock_lap(t, CLK_BLUR);
+	}
 
         // cleanup
         free(hFlt);
@@ -62,12 +65,16 @@ __host__ void blur_sep(float blurSize, byte *dImg, byte *dImgOut)
 	t = clock_start();
 	conv1dRows<<<dimGrid2, dimBlock2>>>(dImg, dImgOut,
 		height, width, fltSize);
-	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+	if (doSync) {
+		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+	}
 
 	conv1dCols<<<dimGrid3, dimBlock3>>>(dImgOut, dImg,
 		height, width, fltSize);
-	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-	clock_lap(t, CLK_BLUR);
+	if (doSync) {
+		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+		clock_lap(t, CLK_BLUR);
+	}
 
 	// TODO: remove this
 	CUDAERR(cudaMemcpy(dImgOut, dImg, width*height,
@@ -395,22 +402,28 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 //	sobel_sep<<<dimGrid2, dimBlock2>>>(dImgOut, dImg, dImgTmp,
 //		height, width);
 	CUDAERR(cudaGetLastError(), "launch sobel kernel");
-	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-	clock_lap(t, CLK_SOBEL);
+	if (doSync) {
+		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+		clock_lap(t, CLK_SOBEL);
+	}
 
 	std::cout << "Performing edge thinning..." << std::endl;
 	edge_thin<<<dimGrid, dimBlock>>>(dImg, dImgTmp, dImgOut,
 		height, width);
 	CUDAERR(cudaGetLastError(), "launch edge thinning kernel");
-	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-	clock_lap(t, CLK_THIN);
+	if (doSync) {
+		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+		clock_lap(t, CLK_THIN);
+	}
 
 	std::cout << "Performing double thresholding..." << std::endl;
 	edge_thin<<<dimGrid, dimBlock>>>(dImgOut, dImgTmp, height, width,
 		255*threshold1, 255*threshold2);
 	CUDAERR(cudaGetLastError(), "launch double thresholding kernel");
-	CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
-	clock_lap(t, CLK_THRES);
+	if (doSync) {
+		CUDAERR(cudaDeviceSynchronize(), "cudaDeviceSynchronize()");
+		clock_lap(t, CLK_THRES);
+	}
 
 	if (do_hysteresis) {
 		std::cout << "Performing hysteresis..." << std::endl;
@@ -421,9 +434,11 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 				height, width, i==hyst_iters-1);
 			CUDAERR(cudaGetLastError(),
 	   			"launch hysteresis kernel");
-			CUDAERR(cudaDeviceSynchronize(),
-	   			"cudaDeviceSynchronize()");
-			clock_lap(t, CLK_HYST);
+			if (doSync) {
+				CUDAERR(cudaDeviceSynchronize(),
+					"cudaDeviceSynchronize()");
+				clock_lap(t, CLK_HYST);
+			}
 		}
 	}
 
@@ -438,18 +453,23 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 	CUDAERR(cudaFree(dImgTmp), "freeing dImgTmp");
 }
 
+// print timings
 __host__ void print_timings(void)
 {
-	// print times
-	// print timing statistics
+	std::cout << "overall:\t" << clock_ave[CLK_ALL] << "s" << std::endl;
+
+	// doSync off means only overall time counted
+	if (!doSync) {
+		return;
+	}
+
 	std::cout << "grayscale:\t" << clock_ave[CLK_GRAY] << "s" << std::endl
 		<< "blur:\t\t" << clock_ave[CLK_BLUR] << "s" << std::endl
 		<< "sobel\t\t" << clock_ave[CLK_SOBEL] << "s" << std::endl
 		<< "edgethin:\t" << clock_ave[CLK_THIN] << "s" << std::endl
 		<< "threshold:\t" << clock_ave[CLK_THRES] << "s" << std::endl
 		<< "hysteresis:\t" << clock_ave[CLK_HYST] << "s" << std::endl
-		<< "hyst total:\t" << clock_total[CLK_HYST] << "s" << std::endl
-		<< "overall:\t" << clock_ave[CLK_ALL] << "s" << std::endl;
+		<< "hyst total:\t" << clock_total[CLK_HYST] << "s" << std::endl;
 }
 
 __host__ int main(void)
@@ -479,6 +499,9 @@ __host__ int main(void)
 
 	std::cout << "Hysteresis? ";
 	std::cin >> do_hysteresis;
+
+	std::cout << "Sync after each kernel? ";
+	std::cin >> doSync;
 
 	inFile += ".png";
 	outFile += "_bs" + std::to_string(blurStd)
@@ -527,8 +550,10 @@ __host__ int main(void)
 	toGrayScale<<<dimGrid, dimBlock>>>(dImg, dImgMono, height, width,
 		channels);
 	CUDAERR(cudaGetLastError(), "launch toGrayScale kernel");
-	cudaDeviceSynchronize();
-	clock_lap(tGray, CLK_GRAY);
+	if (doSync) {
+		cudaDeviceSynchronize();
+		clock_lap(tGray, CLK_GRAY);
+	}
 
 	// canny edge detection
 	std::cout << "Performing canny edge-detection..." << std::endl;
@@ -542,7 +567,9 @@ __host__ int main(void)
 		height, width, channels);
 	CUDAERR(cudaGetLastError(), "launch fromGrayScale kernel");
 	cudaDeviceSynchronize();
-	clock_lap(tGray, CLK_GRAY);
+	if (doSync) {
+		clock_lap(tGray, CLK_GRAY);
+	}
 	clock_lap(tOverall, CLK_ALL);
 
 	// copy image back to host
