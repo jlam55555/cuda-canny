@@ -1,4 +1,4 @@
-#include "sobel.h"
+#include "./sobel/sobel.h"
 #include <math.h>
 #include <stdlib.h>
 #include <float.h>

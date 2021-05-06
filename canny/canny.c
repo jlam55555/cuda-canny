@@ -8,11 +8,8 @@
 #include "blur.h"
 
 #include "image_prep.h"
-#include "../sobel/sobel.h"
-#include "../sobel.h"
+#include "sobel.h"
 
-#define threshold_1 64
-#define threshold_2 0x90
 #define ThresholdL 51
 #define ThresholdH 102
 
@@ -163,7 +160,7 @@ int main(int argc, char** argv){
         rowStride = width*channels;
 
         printf("channel is :%d\n", channels);
-        printf("Allocating space...\n");
+        // printf("Allocating space...\n");
         Img = (byte*)malloc(width * height * channels);
         ImgMono = (byte*)malloc(width * height);
         ImgMonoOut = (byte*)malloc(width * height);
@@ -174,31 +171,52 @@ int main(int argc, char** argv){
         }
         clock_t begin = clock();
         // convert to grayscale
-        printf("Converting to grayscale...\n");
+        //printf("Converting to grayscale...\n");
         toGreyScale(Img,ImgMono,height,width,channels);
 
-        printf("Performing Gaussian blurring...........\n");
+        //printf("Performing Gaussian blurring...........\n");
+        clock_t blur_begin = clock();
         blur(2,ImgMono,ImgMonoOut);
+        clock_t blur_end = clock();
+        printf("blur time: %f\n",(double)(blur_end-blur_begin)/CLOCKS_PER_SEC);
 
-        printf("Performing Sobel filter...\n");
+        
+        //printf("Performing Sobel filter...\n");
+        clock_t sobel_begin = clock();
         sobelv2(ImgMonoOut,ImgMono,ImgTemp,height,width);
                 //ImgMono: net Gradient 
                 //ImgTemp: direction
+        clock_t sobel_end = clock();
+        printf("sobel time: %f\n",(double)(sobel_end-sobel_begin)/CLOCKS_PER_SEC);
 
-        printf("Performing Edge thinning...\n");
+        
+        //printf("Performing Edge thinning...\n");
+        clock_t edge_thin_begin = clock();
         edge_thin(ImgMono,ImgTemp,ImgMonoOut,height,width);
+        clock_t edge_thin_end = clock();
+        printf("edge_thin time: %f\n",(double)(edge_thin_end-edge_thin_begin)/CLOCKS_PER_SEC);
 
-        printf("Performing Double thresholding...\n");
+
+        //printf("Performing Double thresholding...\n");
+        clock_t edge_thin_double_begin = clock();
         edge_thin_double(ImgMonoOut,ImgTemp,height,width);
+        clock_t edge_thin_double_end = clock();
+        printf("edge_thin_double time: %f\n",(double)(edge_thin_double_end-edge_thin_double_begin)/CLOCKS_PER_SEC);
 
-        printf("Performing Hysteresis Thresholding...\n");
+
+        // printf("Performing Hysteresis Thresholding...\n");
         // using ImgTemp
+
+        clock_t hyster_begin = clock();
         byte* edge = (byte*)calloc(height*width,sizeof(byte));
 
         hysteresis(ImgTemp,edge,height,width);
+        clock_t hyster_end = clock();
+        printf("hyster time: %f\n",(double)(hyster_end-hyster_begin)/CLOCKS_PER_SEC);
+
 
         // convert back from grayscale
-        printf("Convert image back to multi-channel...\n");
+        //printf("Convert image back to multi-channel...\n");
         fromGreyScale(edge,Img,height,width,channels);
 
         clock_t end = clock();

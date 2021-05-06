@@ -19,7 +19,15 @@ $ make -C canny_cuda CUDA_PATH=/usr TARGET_ARCH=x86_64 SMS=30 [TARGET]
 where the target is one of `all`, `clean`, etc. Specify the `dbg=1` Makefile flag to enable debugging. See the [Makefile](canny_cuda/Makefile) for more build flags.
 
 ##### CPU Application
-(coming soon)
+For the CPU verison, go to the canny dir first
+``` bash
+$ make
+``` 
+If need to clean the old excutable
+```bash
+$ make clean
+```
+where the target is one of `all`, `clean`, etc. See the [Makefile](canny/Makefile) for more build flags.
 
 ---
 
@@ -65,5 +73,12 @@ This will generate a PNG file with the filename:
 ```text
 [OUTFILE]_bs[BLURSIZE]_th[THRESHOLD1]_th[THRESHOLD2].png
 ```
+
+##### CPU Version Application
+The Makefile should build the C application to `canny/canny`. When you run the application, it will prompt you for several options 
+```bash
+$ ./canny [output.png] [input.png]
+```
+
 
 [paper]: https://ieeexplore.ieee.org/abstract/document/4563088
