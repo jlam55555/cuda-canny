@@ -114,7 +114,6 @@ __global__ void sobel(byte *img, byte *out, byte *out2, int h, int w)
 __global__ void sobel_shm(byte *img, byte *out, byte *out2, int h, int w)
 {
 	int y, x;
-	bool in_bounds;
 	int vKer, hKer;
 	__shared__ int tmp[bs*bs];
 
@@ -147,7 +146,6 @@ __global__ void sobel_shm(byte *img, byte *out, byte *out2, int h, int w)
 __global__ void sobel_sep(byte *img, byte *out, byte *out2, int h, int w)
 {
 	int y, x;
-	bool in_bounds;
 
 	// using int instead of byte for the following offers a 0.01s (5%)
 	// speedup on the 16k image -- coalesced memory?
@@ -165,12 +163,12 @@ __global__ void sobel_sep(byte *img, byte *out, byte *out2, int h, int w)
 	__syncthreads();
 
 	// first convolution
-	if (ty>=1 && ty<bs-1 && tx>=0 && tx<bs) {
+	if (ty>=1 && ty<bs-1 && tx && tx<bs) {
 		tmp2[ty*bs+tx] = tmp1[(ty-1)*bs+tx]
 			+ (tmp1[ty*bs+tx]<<1) + tmp1[(ty+1)*bs+tx];
 	}
 
-	if (ty>=0 && ty<bs && tx>=1 && tx<bs-1) {
+	if (ty && ty<bs && tx>=1 && tx<bs-1) {
 		tmp3[ty*bs+tx] = tmp1[ty*bs+(tx-1)]
 			+ (tmp1[ty*bs+tx]<<1) + tmp1[ty*bs+(tx+1)];
 	}
@@ -269,13 +267,12 @@ __global__ void edge_thin(byte *dImg, byte *out, int h, int w, byte t1, byte t2)
 #define CAS(buf, cond, x2, y2, width) \
 	if ((cond) && buf[(y2)*(width)+(x2)] == MSK_THR) { \
 		buf[(y2)*(width)+(x2)] = MSK_NEW; \
-                changes = 1; \
 	}
 
 // perform one iteration of hysteresis
 __global__ void hysteresis(byte *dImg, int h, int w, bool final)
 {
-	int y, x, i;
+	int y, x;
 	__shared__ byte changes;
 
 	// infer y, x, from block/thread index
@@ -285,7 +282,9 @@ __global__ void hysteresis(byte *dImg, int h, int w, bool final)
 	// check if pixel is connected to its neighbors; continue until
 	// no changes remaining
 	do {
+		__syncthreads();
 		changes = 0;
+		__syncthreads();
 
 		// make sure inside bounds -- need this here b/c we can't have
 		// __syncthreads() cause a branch divergence in a warp;
@@ -295,6 +294,7 @@ __global__ void hysteresis(byte *dImg, int h, int w, bool final)
 		if ((x<w && y<h) && dImg[y*w+x] == MSK_NEW) {
 			// promote to definitely discovered
 			dImg[y*w+x] = MSK_DEF;
+			changes = 1;
 
 			// check neighbors
 			CAS(dImg,	x>0&&y>0,	x-1,	y-1,	w);
@@ -319,7 +319,7 @@ __global__ void hysteresis(byte *dImg, int h, int w, bool final)
 // shared memory version of hysteresis
 __global__ void hysteresis_shm(byte *dImg, int h, int w, bool final)
 {
-	int y, x, i;
+	int y, x;
 	bool in_bounds;
 	__shared__ byte changes, tmp[bs*bs];
 
@@ -338,7 +338,9 @@ __global__ void hysteresis_shm(byte *dImg, int h, int w, bool final)
 	// check if pixel is connected to its neighbors; continue until
 	// no changes remaining
 	do {
+		__syncthreads();
 		changes = 0;
+		__syncthreads();
 
 		// make sure inside bounds -- need this here b/c we can't have
 		// __syncthreads() cause a branch divergence in a warp;
@@ -348,6 +350,7 @@ __global__ void hysteresis_shm(byte *dImg, int h, int w, bool final)
 		if (in_bounds && tmp[ty*bs+tx] == MSK_NEW) {
 			// promote to definitely discovered
 			tmp[ty*bs+tx] = MSK_DEF;
+			changes = 1;
 
 			// check neighbors
 			CAS(tmp, 1,		tx-1,	ty-1,	bs);
@@ -363,24 +366,22 @@ __global__ void hysteresis_shm(byte *dImg, int h, int w, bool final)
 		__syncthreads();
 	} while (changes);
 
-	// in final round, only color interior
-	if (final) {
-		if (in_bounds) {
-			dImg[y*w+x] = MSK_DEF * (tmp[ty*bs+tx] == MSK_DEF);
+	if (y>=0 && y<h && x>=0 && x<w) {
+		if (final) {
+			if (in_bounds) {
+				dImg[y*w+x] = MSK_DEF*(tmp[ty*bs+tx]==MSK_DEF);
+			}
+		} else {
+			dImg[y*w+x] = max(dImg[y*w+x], tmp[ty*bs+tx]);
 		}
-	}
-	// in non-final round, update if better
-	else if (y>=0 && y<h && x>=0 && x<w && tmp[ty*bs+tx] > dImg[y*w+x]) {
-		dImg[y*w+x] = tmp[ty*bs+tx];
 	}
 }
 
 // perform canny edge detection
 __host__ void canny(byte *dImg, byte *dImgOut,
-	float blurStd, float threshold1, float threshold2,
-	bool do_hysteresis, int hyst_iters)
+	float blurStd, float threshold1, float threshold2, int hystIters)
 {
-	byte *dTmp, *dImgTmp;
+	byte *dImgTmp;
 	clock_t *t;
 	int i;
 
@@ -425,13 +426,13 @@ __host__ void canny(byte *dImg, byte *dImgOut,
 		clock_lap(t, CLK_THRES);
 	}
 
-	if (do_hysteresis) {
+	if (hystIters) {
 		std::cout << "Performing hysteresis..." << std::endl;
-		for (i = 0; i < hyst_iters; ++i) {
+		for (i = 0; i < hystIters; ++i) {
 //			hysteresis<<<dimGrid, dimBlock>>>(dImgTmp,
 //				height, width, i==hyst_iters-1);
 			hysteresis_shm<<<dimGrid2, dimBlock2>>>(dImgTmp,
-				height, width, i==hyst_iters-1);
+				height, width, i==hystIters-1);
 			CUDAERR(cudaGetLastError(),
 	   			"launch hysteresis kernel");
 			if (doSync) {
@@ -475,10 +476,9 @@ __host__ void print_timings(void)
 __host__ int main(void)
 {
 	std::string inFile, outFile;
-	unsigned i, channels, rowStride;
+	unsigned i, channels, rowStride, hystIters;
 	byte *hImg, *dImg, *dImgMono, *dImgMonoOut;
 	float blurStd, threshold1, threshold2;
-	bool do_hysteresis;
 	clock_t *tGray, *tOverall;
 
 	// get image name
@@ -498,7 +498,7 @@ __host__ int main(void)
 	std::cin >> threshold2;
 
 	std::cout << "Hysteresis? ";
-	std::cin >> do_hysteresis;
+	std::cin >> hystIters;
 
 	std::cout << "Sync after each kernel? ";
 	std::cin >> doSync;
@@ -507,7 +507,7 @@ __host__ int main(void)
 	outFile += "_bs" + std::to_string(blurStd)
 		+ "_th" + std::to_string(threshold1)
 		+ "_th" + std::to_string(threshold2)
-		+ (do_hysteresis ? "" : "_nohyst") + ".png";
+		+ (hystIters ? "" : "_nohyst") + ".png";
 
 	// get image
 	std::cout << "Reading image from file..." << std::endl;
@@ -558,7 +558,7 @@ __host__ int main(void)
 	// canny edge detection
 	std::cout << "Performing canny edge-detection..." << std::endl;
 	canny(dImgMono, dImgMonoOut, blurStd, threshold1, threshold2,
-		do_hysteresis, 5);
+		hystIters);
 
 	// convert back from grayscale
 	tGray = clock_start();
