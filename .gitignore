@@ -1,12 +1,18 @@
 # object files
 *.o
 
+# dSYM file
+*.dSYM
+
 # target executable
 sobel
 main
 
 # IntelliJ files
 .idea
+
+# VSCode files
+.vscode
 
 # image files
 *.png

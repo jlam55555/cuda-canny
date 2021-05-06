@@ -133,7 +133,7 @@ endif
 ################################################################################
 
 # for now, very simple Makefile: assume one file
-BINARY:=sobel
+BINARY:=canny
 SOURCES:=$(shell find *.cu)
 OBJECTS:=$(SOURCES:%.cu=%.o)
 
