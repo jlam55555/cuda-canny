@@ -79,6 +79,28 @@ The Makefile should build the C application to `canny/canny`. When you run the a
 ```bash
 $ ./canny [output.png] [input.png]
 ```
+The prompts should be like something in the following
+```bash
+user-name@host-name canny % ./canny star.png t.png
+Reading the image...
+channel is :3
+blurSize: 2.000000 
+Performing conv2d...blur time: 0.301269
+Performing Sobel filter...
+sobel time: 0.011020
+edge_thin time: 0.003468
+edge_thin_double time: 0.001077
+Performing Hysteresis Thresholding...
+hyster time: 0.003468
+Convert image back to multi-channel...
+Copy image back to row_pointers...
+Writing image back to file...
+Done...
+time cost: 0.323120
+
+
+```
+
 
 
 [paper]: https://ieeexplore.ieee.org/abstract/document/4563088
