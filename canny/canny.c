@@ -93,19 +93,6 @@ void edge_thin_double(byte* input, byte* output, int h, int w)
         }
 }	
 
-void bfs(byte* input, int x, int y, int width, int height, int* changes){
-        printf("Performing bfs");
-        if(x >= width || y >= height || x < 0 || y < 0){
-                return;
-        }
-        int index = y*width + x;
-        if(input[index] >= threshold_1){
-                input[index] = threshold_2;
-                printf("change!!!");
-                *changes = 1;
-        }
-
-}
 bool checkInRang(int r,int c, int rows, int cols){
 	if (r >= 0 && r < rows && c >= 0 && c < cols)
 		return true;
@@ -113,7 +100,6 @@ bool checkInRang(int r,int c, int rows, int cols){
                 return false;
         }
 }
-
 // from edge, extend the edge
 void trace(byte* edgeMag_noMaxsup, byte* edge, int TL, int y, int x, int height, int width){
         int index = y * width + x;
@@ -181,7 +167,7 @@ int main(int argc, char** argv){
         printf("blur time: %f\n",(double)(blur_end-blur_begin)/CLOCKS_PER_SEC);
 
         
-        //printf("Performing Sobel filter...\n");
+        printf("Performing Sobel filter...\n");
         clock_t sobel_begin = clock();
         sobelv2(ImgMonoOut,ImgMono,ImgTemp,height,width);
                 //ImgMono: net Gradient 
@@ -204,7 +190,7 @@ int main(int argc, char** argv){
         printf("edge_thin_double time: %f\n",(double)(edge_thin_double_end-edge_thin_double_begin)/CLOCKS_PER_SEC);
 
 
-        // printf("Performing Hysteresis Thresholding...\n");
+        printf("Performing Hysteresis Thresholding...\n");
         // using ImgTemp
 
         clock_t hyster_begin = clock();
@@ -216,7 +202,7 @@ int main(int argc, char** argv){
 
 
         // convert back from grayscale
-        //printf("Convert image back to multi-channel...\n");
+        printf("Convert image back to multi-channel...\n");
         fromGreyScale(edge,Img,height,width,channels);
 
         clock_t end = clock();
