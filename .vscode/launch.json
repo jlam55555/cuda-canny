@@ -10,15 +10,15 @@
             "request": "launch",
             "program": "${fileDirname}/${fileBasenameNoExtension}",
             "args": [
-                "/Users/leonfang/Sobel_filter/canny/star.png",
-                "/Users/leonfang/Sobel_filter/canny/test.png"
+                "/Users/leonfang/Canny_filter/images/in/skyline_1000.png",
+                "/Users/leonfang/Canny_filter/canny/test_skyline_1000.png"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],
             "externalConsole": false,
             "MIMode": "lldb",
-            "preLaunchTask": "C/C++: gcc build active file",
+            "preLaunchTask": "C/C++: gcc build active file"
         }
     ]
 }
